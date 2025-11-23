@@ -10,10 +10,10 @@ Audits room mailbox calendars to find meetings whose organizers are missing, dis
 - **EwsAssemblyPath**: Path to the EWS Managed API assembly.
 - **MonthsAhead / MonthsBehind**: Date window for scanning meetings.
 - **OutputPath**: CSV report path (default: `ghost-meetings-report.csv` in the current directory).
-- **ExcelOutputPath**: Optional Excel report path (default: `ghost-meetings-report.xlsx` in the current directory). Requires the `ImportExcel` PowerShell module.
+- **ExcelOutputPath**: Optional Excel report path. Provide a path to generate an `.xlsx` export; otherwise only the CSV is created. Requires the `ImportExcel` PowerShell module.
 - **OrganizationSmtpSuffix**: Domain suffix used to identify internal organizers.
 - **ImpersonationSmtp**: SMTP address used for EWS impersonation and Autodiscover.
 - **SendInquiry / NotificationFrom / NotificationTemplate**: Options to email attendees of ghost meetings.
 
 ### Exporting to Excel
-When **ExcelOutputPath** is provided (or left as its default), the script attempts to load the `ImportExcel` module and writes the report to an `.xlsx` file alongside the CSV. Install the module beforehand with `Install-Module ImportExcel` if it is not already available.
+When **ExcelOutputPath** is provided, the script attempts to load the `ImportExcel` module and writes the report to an `.xlsx` file alongside the CSV. Install the module beforehand with `Install-Module ImportExcel` if it is not already available.

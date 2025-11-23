@@ -29,7 +29,7 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$OutputPath = (Join-Path -Path $PWD -ChildPath 'ghost-meetings-report.csv'),
 
-    [Parameter()][ValidateNotNullOrEmpty()][string]$ExcelOutputPath = (Join-Path -Path $PWD -ChildPath 'ghost-meetings-report.xlsx'),
+    [Parameter()][string]$ExcelOutputPath = $null,
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$OrganizationSmtpSuffix = 'contoso.com',
 
