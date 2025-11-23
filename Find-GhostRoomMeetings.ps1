@@ -30,6 +30,8 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$OrganizationSmtpSuffix = 'contoso.com',
 
+    [Parameter()][ValidateNotNullOrEmpty()][string]$ImpersonationSmtp,
+
     [Parameter()][switch]$SendInquiry,
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$NotificationFrom,
@@ -41,6 +43,18 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($SendInquiry -and -not $NotificationFrom) {
+    throw "-NotificationFrom is required when -SendInquiry is specified."
+}
+
+if (-not $ImpersonationSmtp) {
+    if ($Credential.UserName -match '@') {
+        $ImpersonationSmtp = $Credential.UserName
+    } else {
+        throw 'Provide -ImpersonationSmtp (SMTP address) for EWS Autodiscover and impersonation.'
+    }
+}
 
 function Connect-ExchangeSession {
     [CmdletBinding()]
@@ -155,10 +169,15 @@ function Test-OrganizerState {
         }
     }
 
-    $user = Get-ADUser -ErrorAction SilentlyContinue -Identity $recipient.SamAccountName -Properties Enabled
     $enabled = $null
-    if ($user) {
-        $enabled = $user.Enabled
+    if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+        Write-Verbose 'ActiveDirectory module not available; skipping enabled-state lookup.'
+    } else {
+        Import-Module ActiveDirectory -ErrorAction SilentlyContinue | Out-Null
+        $user = Get-ADUser -ErrorAction SilentlyContinue -Identity $recipient.SamAccountName -Properties Enabled
+        if ($user) {
+            $enabled = $user.Enabled
+        }
     }
 
     $status = if ($enabled -eq $false) { 'Disabled' } else { 'Active' }
@@ -240,7 +259,7 @@ $endWindow = (Get-Date).AddMonths($MonthsAhead)
 $exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri -Credential $Credential
 
 try {
-    $ews = Connect-EwsService -Credential $Credential -EwsAssemblyPath $EwsAssemblyPath -ImpersonationSmtp $Credential.UserName -ExplicitUrl $EwsUrl
+    $ews = Connect-EwsService -Credential $Credential -EwsAssemblyPath $EwsAssemblyPath -ImpersonationSmtp $ImpersonationSmtp -ExplicitUrl $EwsUrl
     $results = Find-GhostMeetings -Service $ews -OrganizationSuffix $OrganizationSmtpSuffix -SendInquiry:$SendInquiry -NotificationFrom $NotificationFrom -NotificationTemplate $NotificationTemplate -WindowStart $startWindow -WindowEnd $endWindow -Verbose:$VerbosePreference
     $results | Export-Csv -NoTypeInformation -Path $OutputPath
     Write-Host "Ghost meeting report saved to $OutputPath" -ForegroundColor Green
