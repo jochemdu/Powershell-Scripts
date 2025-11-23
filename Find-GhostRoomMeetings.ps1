@@ -125,21 +125,29 @@ function Get-RoomMeetings {
     $view = New-Object Microsoft.Exchange.WebServices.Data.CalendarView($WindowStart, $WindowEnd, 200)
     $view.PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
 
-    $items = $calendar.FindAppointments($view)
-    foreach ($item in $items.Items) {
-        $item.Load()
-        [pscustomobject]@{
-            Room              = $RoomSmtp
-            Subject           = $item.Subject
-            Start             = $item.Start
-            End               = $item.End
-            IsRecurring       = $item.AppointmentType -ne [Microsoft.Exchange.WebServices.Data.AppointmentType]::Single
-            Organizer         = $item.Organizer.Address
-            RequiredAttendees = $item.RequiredAttendees | ForEach-Object { $_.Address }
-            OptionalAttendees = $item.OptionalAttendees | ForEach-Object { $_.Address }
-            UniqueId          = $item.Id.UniqueId
-            EwsItem           = $item
+    $moreAvailable = $true
+    $offset = 0
+    while ($moreAvailable) {
+        $view.Offset = $offset
+        $items = $calendar.FindAppointments($view)
+        foreach ($item in $items.Items) {
+            $item.Load()
+            [pscustomobject]@{
+                Room              = $RoomSmtp
+                Subject           = $item.Subject
+                Start             = $item.Start
+                End               = $item.End
+                IsRecurring       = $item.AppointmentType -ne [Microsoft.Exchange.WebServices.Data.AppointmentType]::Single
+                Organizer         = $item.Organizer.Address
+                RequiredAttendees = $item.RequiredAttendees | ForEach-Object { $_.Address }
+                OptionalAttendees = $item.OptionalAttendees | ForEach-Object { $_.Address }
+                UniqueId          = $item.Id.UniqueId
+                EwsItem           = $item
+            }
         }
+
+        $moreAvailable = $items.MoreAvailable
+        $offset += $items.Items.Count
     }
 }
 
@@ -220,11 +228,20 @@ function Find-GhostMeetings {
     $rooms = Get-RoomMailboxes
     $report = @()
 
+    $roomIndex = 0
     foreach ($room in $rooms) {
+        $roomIndex++
+        Write-Progress -Activity 'Scanning room calendars' -Status $room.PrimarySmtpAddress -PercentComplete (($roomIndex / $rooms.Count) * 100)
         Write-Verbose "Inspecting room $($room.PrimarySmtpAddress)"
         $meetings = Get-RoomMeetings -Service $Service -RoomSmtp $room.PrimarySmtpAddress.ToString() -WindowStart $WindowStart -WindowEnd $WindowEnd
 
+        $meetingIndex = 0
         foreach ($meeting in $meetings) {
+            $meetingIndex++
+            if ($meetings.Count -gt 0) {
+                Write-Progress -Activity "Scanning $($room.PrimarySmtpAddress)" -Status $meeting.Subject -PercentComplete (($meetingIndex / $meetings.Count) * 100)
+            }
+
             $organizerState = Test-OrganizerState -SmtpAddress $meeting.Organizer -OrganizationSuffix $OrganizationSuffix
             $status = $organizerState.Status
             $attendees = @($meeting.RequiredAttendees + $meeting.OptionalAttendees) | Where-Object { $_ -and $_ -ne $meeting.Organizer }
@@ -243,7 +260,7 @@ function Find-GhostMeetings {
 
             $report += $entry
 
-            if ($status -ne 'Active' -and $SendInquiry -and $NotificationFrom) {
+            if ($status -ne 'Active' -and $SendInquiry -and $NotificationFrom -and $attendees.Count -gt 0) {
                 $body = [string]::Format($NotificationTemplate, $meeting.Subject)
                 Send-GhostMeetingInquiry -From $NotificationFrom -To $attendees -Subject "Room booking confirmation: $($meeting.Subject)" -Body $body
             }
@@ -260,6 +277,10 @@ $exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri -Credenti
 
 try {
     $ews = Connect-EwsService -Credential $Credential -EwsAssemblyPath $EwsAssemblyPath -ImpersonationSmtp $ImpersonationSmtp -ExplicitUrl $EwsUrl
+    $outputDirectory = Split-Path -Path $OutputPath -Parent
+    if (-not (Test-Path -Path $outputDirectory)) {
+        New-Item -Path $outputDirectory -ItemType Directory | Out-Null
+    }
     $results = Find-GhostMeetings -Service $ews -OrganizationSuffix $OrganizationSmtpSuffix -SendInquiry:$SendInquiry -NotificationFrom $NotificationFrom -NotificationTemplate $NotificationTemplate -WindowStart $startWindow -WindowEnd $endWindow -Verbose:$VerbosePreference
     $results | Export-Csv -NoTypeInformation -Path $OutputPath
     Write-Host "Ghost meeting report saved to $OutputPath" -ForegroundColor Green
