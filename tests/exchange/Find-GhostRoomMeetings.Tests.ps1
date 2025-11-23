@@ -38,9 +38,13 @@ Describe 'Find-GhostRoomMeetings.ps1' {
         It 'writes report exports to the TestDrive paths and triggers export commands' {
             $csvPath = Join-Path -Path $TestDrive -ChildPath 'reports/ghost-meetings.csv'
             $excelPath = Join-Path -Path $TestDrive -ChildPath 'reports/ghost-meetings.xlsx'
+            $securePassword = New-Object System.Security.SecureString
+            'P@ssw0rd!'.ToCharArray() | ForEach-Object { $securePassword.AppendChar($_) }
+            $securePassword.MakeReadOnly()
+
             $credential = [pscredential]::new(
                 'service@contoso.com',
-                (ConvertTo-SecureString 'P@ssw0rd!' -AsPlainText -Force)
+                $securePassword
             )
 
             $roomMeetings = @(
