@@ -6,6 +6,7 @@
     Connects to Exchange Server on-premises via remote PowerShell and EWS to enumerate room mailboxes,
     retrieve calendar items in a specified date window, and validate meeting organizers against Active Directory.
     Produces a report of potential ghost meetings and optionally sends notification emails to remaining attendees.
+    A JSON configuration file can be supplied with -ConfigPath to pre-populate parameter values (credentials excluded).
 
 .NOTES
     - Requires a service account with FullAccess/impersonation rights to room mailboxes for EWS queries.
@@ -38,11 +39,70 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$NotificationTemplate = 'Please confirm if this meeting is still required for {0}.',
 
-    [Parameter()][ValidateNotNullOrEmpty()][string]$EwsUrl
+    [Parameter()][ValidateNotNullOrEmpty()][string]$EwsUrl,
+
+    [Parameter()][ValidateNotNullOrEmpty()][string]$ConfigPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Import-ConfigurationFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Path
+    )
+
+    if (-not (Test-Path -Path $Path)) {
+        throw "Configuration file not found at '$Path'"
+    }
+
+    $raw = Get-Content -Path $Path -Raw
+    try {
+        return $raw | ConvertFrom-Json
+    } catch {
+        throw "Configuration file '$Path' is not valid JSON: $($_.Exception.Message)"
+    }
+}
+
+function Set-ConfigDefault {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Name,
+        [Parameter(Mandatory)]$Config,
+        [Parameter(Mandatory)][hashtable]$BoundParameters,
+        [Parameter(Mandatory)][ref]$Variable,
+        [Parameter()][switch]$IsSwitch
+    )
+
+    if (-not $Config) { return }
+    if ($BoundParameters.ContainsKey($Name)) { return }
+    if (-not ($Config.PSObject.Properties.Name -contains $Name)) { return }
+
+    if ($IsSwitch) {
+        $Variable.Value = [bool]$Config.$Name
+    } else {
+        $Variable.Value = $Config.$Name
+    }
+}
+
+$config = $null
+$script:BoundScriptParameters = $PSBoundParameters.Clone()
+if ($ConfigPath) {
+    $config = Import-ConfigurationFile -Path $ConfigPath
+}
+
+Set-ConfigDefault -Name 'ExchangeUri' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ExchangeUri)
+Set-ConfigDefault -Name 'EwsAssemblyPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsAssemblyPath)
+Set-ConfigDefault -Name 'MonthsAhead' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsAhead)
+Set-ConfigDefault -Name 'MonthsBehind' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsBehind)
+Set-ConfigDefault -Name 'OutputPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$OutputPath)
+Set-ConfigDefault -Name 'OrganizationSmtpSuffix' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$OrganizationSmtpSuffix)
+Set-ConfigDefault -Name 'ImpersonationSmtp' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ImpersonationSmtp)
+Set-ConfigDefault -Name 'SendInquiry' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$SendInquiry) -IsSwitch
+Set-ConfigDefault -Name 'NotificationFrom' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$NotificationFrom)
+Set-ConfigDefault -Name 'NotificationTemplate' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$NotificationTemplate)
+Set-ConfigDefault -Name 'EwsUrl' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsUrl)
 
 if ($SendInquiry -and -not $NotificationFrom) {
     throw "-NotificationFrom is required when -SendInquiry is specified."
