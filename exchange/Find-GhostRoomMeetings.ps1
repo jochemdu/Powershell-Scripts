@@ -19,7 +19,9 @@
 param(
     [Parameter()][ValidateNotNullOrEmpty()][string]$ExchangeUri = 'http://exchange.contoso.com/PowerShell/',
 
-    [Parameter()][ValidateNotNull()][System.Management.Automation.PSCredential]$Credential = (Get-Credential -Message 'Enter Exchange/AD credentials'),
+    [Parameter()][ValidateSet('Auto','OnPrem','EXO')][string]$ConnectionType = 'Auto',
+
+    [Parameter()][System.Management.Automation.PSCredential]$Credential,
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$EwsAssemblyPath = 'C:\Program Files\Microsoft\Exchange\Web Services\2.2\Microsoft.Exchange.WebServices.dll',
 
@@ -43,11 +45,14 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$EwsUrl,
 
-    [Parameter()][ValidateNotNullOrEmpty()][string]$ConfigPath
+    [Parameter()][ValidateNotNullOrEmpty()][string]$ConfigPath,
+
+    [Parameter()][switch]$TestMode
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:IsDotSourced = $MyInvocation.InvocationName -eq '.'
 
 function Import-ConfigurationFile {
     [CmdletBinding()]
@@ -95,6 +100,7 @@ if ($ConfigPath) {
 }
 
 Set-ConfigDefault -Name 'ExchangeUri' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ExchangeUri)
+Set-ConfigDefault -Name 'ConnectionType' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ConnectionType)
 Set-ConfigDefault -Name 'EwsAssemblyPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsAssemblyPath)
 Set-ConfigDefault -Name 'MonthsAhead' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsAhead)
 Set-ConfigDefault -Name 'MonthsBehind' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsBehind)
@@ -107,12 +113,43 @@ Set-ConfigDefault -Name 'NotificationFrom' -Config $config -BoundParameters $Bou
 Set-ConfigDefault -Name 'NotificationTemplate' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$NotificationTemplate)
 Set-ConfigDefault -Name 'EwsUrl' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsUrl)
 
+$script:ExchangeConnectionType = switch ($ConnectionType) {
+    'EXO'   { 'EXO' }
+    'Auto'  {
+        if ($ExchangeUri -match 'outlook\.office365\.com' -or $ExchangeUri -match 'ps\.outlook\.com' -or $ExchangeUri -match 'office365\.com') { 'EXO' } else { 'OnPrem' }
+    }
+    default { 'OnPrem' }
+}
+
+function New-TemporaryCredential {
+    [CmdletBinding()]
+    param(
+        [Parameter()][ValidateNotNullOrEmpty()][string]$UserName = 'test.user@contoso.com'
+    )
+
+    $secureString = New-Object System.Security.SecureString
+    foreach ($character in ([guid]::NewGuid().ToString('N')).ToCharArray()) {
+        $secureString.AppendChar($character)
+    }
+
+    $secureString.MakeReadOnly()
+    return [pscredential]::new($UserName, $secureString)
+}
+
+if (-not $Credential -and $script:ExchangeConnectionType -eq 'OnPrem') {
+    if ($TestMode -or $script:IsDotSourced) {
+        $Credential = New-TemporaryCredential
+    } else {
+        $Credential = Get-Credential -Message 'Enter Exchange/AD credentials'
+    }
+}
+
 if ($SendInquiry -and -not $NotificationFrom) {
     throw "-NotificationFrom is required when -SendInquiry is specified."
 }
 
 if (-not $ImpersonationSmtp) {
-    if ($Credential.UserName -match '@') {
+    if ($Credential -and $Credential.UserName -match '@') {
         $ImpersonationSmtp = $Credential.UserName
     } else {
         throw 'Provide -ImpersonationSmtp (SMTP address) for EWS Autodiscover and impersonation.'
@@ -122,14 +159,68 @@ if (-not $ImpersonationSmtp) {
 function Connect-ExchangeSession {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ConnectionUri,
-        [Parameter(Mandatory)][ValidateNotNull()][System.Management.Automation.PSCredential]$Credential
+        [Parameter()][ValidateNotNullOrEmpty()][string]$ConnectionUri,
+        [Parameter()][System.Management.Automation.PSCredential]$Credential,
+        [Parameter(Mandatory)][ValidateSet('OnPrem','EXO')][string]$Type,
+        [Parameter()][switch]$TestMode
     )
+
+    if ($Type -eq 'EXO') {
+        if ($TestMode) {
+            Write-Verbose 'Test mode enabled; skipping Connect-ExchangeOnline.'
+            return $null
+        }
+
+        if (-not (Get-Command -Name Connect-ExchangeOnline -ErrorAction SilentlyContinue)) {
+            throw 'ExchangeOnlineManagement module is required to connect to Exchange Online. Install-Module ExchangeOnlineManagement and try again.'
+        }
+
+        Write-Verbose 'Connecting to Exchange Online with modern authentication.'
+        $connectParams = @{ ShowBanner = $false; CommandName = 'Get-ExoMailbox','Get-ExoRecipient' }
+
+        if ($Credential) {
+            $connectParams['Credential'] = $Credential
+            $connectParams['UserPrincipalName'] = $Credential.UserName
+        }
+
+        Connect-ExchangeOnline @connectParams | Out-Null
+        return $null
+    }
+
+    if ($TestMode) {
+        Write-Verbose 'Test mode enabled; skipping on-prem Exchange session creation.'
+        return $null
+    }
+
+    if (-not $Credential) {
+        throw 'Provide -Credential for on-premises connections.'
+    }
 
     Write-Verbose "Opening remote Exchange PowerShell session to $ConnectionUri"
     $session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri $ConnectionUri -Authentication Kerberos -Credential $Credential
     Import-PSSession $session -DisableNameChecking | Out-Null
     return $session
+}
+
+function Disconnect-ExchangeSession {
+    [CmdletBinding()]
+    param(
+        [Parameter()][ValidateSet('OnPrem','EXO')][string]$Type,
+        [Parameter()][System.Management.Automation.Runspaces.PSSession]$Session
+    )
+
+    if ($Type -eq 'EXO') {
+        if (Get-Command -Name Disconnect-ExchangeOnline -ErrorAction SilentlyContinue) {
+            Write-Verbose 'Disconnecting Exchange Online session'
+            Disconnect-ExchangeOnline -Confirm:$false
+        }
+        return
+    }
+
+    if ($Session) {
+        Write-Verbose 'Removing Exchange PowerShell session'
+        Remove-PSSession $Session
+    }
 }
 
 function Connect-EwsService {
@@ -167,8 +258,13 @@ function Get-RoomMailboxes {
     param()
 
     Write-Verbose 'Retrieving room mailboxes'
-    Get-Mailbox -RecipientTypeDetails RoomMailbox -ResultSize Unlimited |
-        Select-Object DisplayName, PrimarySmtpAddress, Alias, Identity
+    if ($script:ExchangeConnectionType -eq 'EXO') {
+        Get-ExoMailbox -RecipientTypeDetails RoomMailbox -ResultSize Unlimited |
+            Select-Object DisplayName, PrimarySmtpAddress, Alias, Identity
+    } else {
+        Get-Mailbox -RecipientTypeDetails RoomMailbox -ResultSize Unlimited |
+            Select-Object DisplayName, PrimarySmtpAddress, Alias, Identity
+    }
 }
 
 function Get-RoomMeetings {
@@ -228,7 +324,11 @@ function Test-OrganizerState {
 
     $recipient = $null
     if ($domainMatchesOrg) {
-        $recipient = Get-Recipient -ErrorAction SilentlyContinue -Identity $SmtpAddress
+        if ($script:ExchangeConnectionType -eq 'EXO') {
+            $recipient = Get-ExoRecipient -Identity $SmtpAddress -ErrorAction SilentlyContinue -PropertySets All
+        } else {
+            $recipient = Get-Recipient -ErrorAction SilentlyContinue -Identity $SmtpAddress
+        }
     }
 
     if (-not $recipient) {
@@ -241,7 +341,12 @@ function Test-OrganizerState {
     }
 
     $enabled = $null
-    if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+    if ($script:ExchangeConnectionType -eq 'EXO') {
+        $exoMailbox = Get-ExoMailbox -Identity $SmtpAddress -ErrorAction SilentlyContinue -PropertySets All
+        if ($exoMailbox -and $exoMailbox.PSObject.Properties.Name -contains 'AccountDisabled') {
+            $enabled = -not $exoMailbox.AccountDisabled
+        }
+    } elseif (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
         Write-Verbose 'ActiveDirectory module not available; skipping enabled-state lookup.'
     } else {
         Import-Module ActiveDirectory -ErrorAction SilentlyContinue | Out-Null
@@ -333,10 +438,24 @@ function Find-GhostMeetings {
     return $report
 }
 
+if ($script:IsDotSourced) {
+    return
+}
+
 $startWindow = (Get-Date).AddMonths(-$MonthsBehind)
 $endWindow = (Get-Date).AddMonths($MonthsAhead)
 
-$exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri -Credential $Credential
+if ($TestMode) {
+    Write-Verbose 'Test mode enabled; skipping Exchange/EWS connections and mailbox scan.'
+    return
+}
+
+$credentialMissingMessage = 'A credential is required to authenticate to EWS for mailbox scans. Provide -Credential explicitly or configure a secure retrieval method.'
+if (-not $Credential) {
+    throw $credentialMissingMessage
+}
+
+$exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri -Credential $Credential -Type $script:ExchangeConnectionType -TestMode:$TestMode
 
 try {
     $ews = Connect-EwsService -Credential $Credential -EwsAssemblyPath $EwsAssemblyPath -ImpersonationSmtp $ImpersonationSmtp -ExplicitUrl $EwsUrl
@@ -366,8 +485,5 @@ try {
     }
 }
 finally {
-    if ($exchangeSession) {
-        Write-Verbose 'Removing Exchange PowerShell session'
-        Remove-PSSession $exchangeSession
-    }
+    Disconnect-ExchangeSession -Type $script:ExchangeConnectionType -Session $exchangeSession
 }
