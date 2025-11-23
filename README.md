@@ -1,6 +1,11 @@
 # Exchange-scripts
 Repository of Exchange scripts.
 
+## Repository richtlijnen
+- Zie [`AGENTS.md`](AGENTS.md) voor code- en structuurafspraken voor nieuwe of aangepaste scripts.
+- Groepeer nieuwe scripts per domein (bijv. `exchange/`, `azure-ad/`) en documenteer ze in een lokale `README.md`.
+- Deelbare functies plaats je in modules onder `modules/<ModuleNaam>/<ModuleNaam>.psm1` en documenteer exports.
+
 ## Find-GhostRoomMeetings.ps1
 Audits room mailbox calendars to find meetings whose organizers are missing, disabled, or external. The script connects to Exchange via remote PowerShell and EWS to gather calendar data, validate organizer status, and produce a report.
 
