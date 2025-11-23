@@ -46,3 +46,34 @@ pwsh -NoProfile -File ./exchange/Find-GhostRoomMeetings.ps1 \
 ### Tests en rooktest
 - Pester-rooktest beschikbaar onder `tests/exchange/Find-GhostRoomMeetings.Tests.ps1` (laadt het EXO-pad met mocks/testmodus).
 - Draai alle tests met `Invoke-Pester -Path tests` vanuit de repo-root.
+
+## Find-UnderutilizedRoomBookings.ps1
+Spoort vergaderingen op waar grote vergaderruimtes (bijv. 6+ plaatsen) geboekt zijn voor slechts één of enkele deelnemers.
+
+### Vereisten
+- PowerShell 5.1 of 7+.
+- On-prem: toegang tot de Exchange Management Shell of een remote PowerShell sessie (`-ExchangeUri`).
+- Exchange Online: `ExchangeOnlineManagement`-module en moderne authenticatie via `Connect-ExchangeOnline`.
+- EWS Managed API assembly beschikbaar op het opgegeven pad (`-EwsAssemblyPath`).
+- Impersonationrechten voor de opgegeven serviceaccount (bijv. `ApplicationImpersonation` in EXO).
+
+### Voorbeeldgebruik
+```powershell
+pwsh -NoProfile -File ./exchange/Find-UnderutilizedRoomBookings.ps1 \
+    -ConnectionType Auto \
+    -ExchangeUri 'http://exchange.contoso.com/PowerShell/' \
+    -ImpersonationSmtp 'service@contoso.com' \
+    -MinimumCapacity 6 \
+    -MaxParticipants 2 \
+    -OutputPath './reports/underutilized.csv'
+```
+
+### Parameters
+- **MinimumCapacity**: Alleen ruimtes scannen met deze minimumcapaciteit of hoger (standaard 6).
+- **MaxParticipants**: Signaleer vergaderingen met maximaal dit aantal deelnemers (standaard 2, telt organisator + aanwezigen).
+- **MonthsAhead/MonthsBehind**: Datumvenster voor de kalenderquery.
+- **TestMode**: Skip daadwerkelijke connecties en gebruik dummy-credentials voor Pester-tests.
+
+### Tests en rooktest
+- Pester-test beschikbaar onder `tests/exchange/Find-UnderutilizedRoomBookings.Tests.ps1` (maakt gebruik van mocks/TestDrive-outputs).
+- Draai alle tests met `Invoke-Pester -Path tests` vanuit de repo-root.
