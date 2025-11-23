@@ -46,3 +46,8 @@ Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestand
 
 ## Documentatie
 - Documenteer in `README.md` de vereiste modules, PowerShell-versie, config- en rapportpaden en de benodigde rechten voor impersonation of autodiscover.
+
+## Meeting-room scripts (zoekbereik)
+- Stel het standaardzoekbereik altijd in vanaf de huidige datum (bijv. `MonthsBehind = 0`) zodat rapportages niet onbedoeld ver het verleden ingaan.
+- Maak `MonthsBehind`/`MonthsAhead` of vergelijkbare tijdsvensters configureerbaar via parameters en via de configbestanden (JSON/PSD1), met duidelijke standaardwaarden.
+- Gebruik `[ValidateRange()]` of `[ValidatePattern()]` voor datum- en periodeparameters en definieer defaults in de param block, zodat scripts weigeren te starten wanneer onrealistische of negatieve waarden worden opgegeven.
