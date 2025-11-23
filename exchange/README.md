@@ -2,6 +2,39 @@
 
 Scripts voor Exchange Server en Exchange Online beheer.
 
+## Secrets en veilige configuratie
+- Bewaar géén wachtwoorden of certificaten in JSON of in de scripts. Gebruik het meegeleverde PSD1-sjabloon `exchange/Secrets.Template.psd1` of een SecretManagement-kluis.
+- Vul het PSD1-sjabloon aan met je tenant-, domein- en serviceaccountvariabelen en verwijs naar SecretManagement-secretnamen in plaats van wachtwoorden.
+- Laad de secrets voordat je het script start en combineer ze met het reguliere JSON-configbestand voor mailboxspecifieke instellingen.
+
+### Voorbeeld: PSD1-sjabloon laden
+```powershell
+$secrets = Import-PowerShellDataFile -Path './exchange/Secrets.Template.psd1'
+$credential = Get-Secret -Name $secrets.ServiceAccount.CredentialSecretName -Vault $secrets.SecretManagement.VaultName -AsCredential
+
+pwsh -NoProfile -File ./exchange/Find-GhostRoomMeetings.ps1 \
+    -ConnectionType $secrets.Exchange.ConnectionType \
+    -ExchangeUri 'http://exchange.contoso.com/PowerShell/' \
+    -Credential $credential \
+    -ImpersonationSmtp $secrets.Exchange.ImpersonationSmtp \
+    -MonthsAhead 6 \
+    -OutputPath './reports/ghost-meetings.csv'
+```
+
+### Voorbeeld: SecretManagement zonder PSD1
+```powershell
+Register-SecretVault -Name 'CompanyVault' -ModuleName Microsoft.PowerShell.SecretManagement
+$credential = Get-Secret -Name 'ExoServiceCredential' -Vault 'CompanyVault' -AsCredential
+
+pwsh -NoProfile -File ./exchange/Find-UnderutilizedRoomBookings.ps1 \
+    -ConnectionType EXO \
+    -ImpersonationSmtp 'service@contoso.com' \
+    -Credential $credential \
+    -MinimumCapacity 6 \
+    -MaxParticipants 2 \
+    -OutputPath './reports/underutilized.csv'
+```
+
 ## Find-GhostRoomMeetings.ps1
 Auditeert vergaderingen in zaalpostvakken om zogeheten "ghost meetings" te detecteren waarbij de organisator ontbreekt of gedeactiveerd is.
 
