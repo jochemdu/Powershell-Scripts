@@ -1,0 +1,48 @@
+# AGENTS.md
+
+## Scope
+Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestanden.
+
+## PowerShell-richtlijnen
+- Minimale vereiste PowerShell-versie: 5.1 of PowerShell 7+.
+- Vereiste modules/assemblies: Exchange Management Shell (of Exchange Online PowerShell voor EXO), EWS Managed API, en ImportExcel.
+- Elk script start met `[CmdletBinding()]`, `Set-StrictMode -Version Latest` en `$ErrorActionPreference = 'Stop'`.
+- Gebruik `[Validate*]`-attributen voor parametercontrole en definieer booleans als `switch`.
+- Vermijd het opslaan van gevoelige waarden in code of JSON; lees credentials of app secrets via veilige opslag (bijv. SecretManagement) of interactief.
+
+## Configuratie (`-ConfigPath`)
+- Config JSON bevat minimaal tenant- of organisatiegegevens en per mailbox of taak de parameters voor het script.
+- Voorbeeld (on-prem/EXO zonder impersonation):
+  ```json
+  {
+    "Connection": {
+      "Type": "OnPrem", // of "EXO"
+      "EwsUrl": "https://mail.contoso.com/EWS/Exchange.asmx", // optioneel bij autodiscover
+      "Autodiscover": true
+    },
+    "Mailboxes": [
+      {
+        "SmtpAddress": "user@contoso.com",
+        "ReportPathCsv": "reports/user.csv",
+        "ReportPathXlsx": "reports/user.xlsx"
+      }
+    ]
+  }
+  ```
+- Voeg voor impersonation een `Impersonation`-object toe met `SmtpAddress` voor `-ImpersonationSmtp`. Beperk dit tot niet-gevoelige info; wachtwoorden, tokens en certificaatpaden blijven buiten het JSON-bestand.
+
+## Verbindingen en autodiscover
+- Ondersteun zowel autodiscover als expliciete `-EwsUrl`; documenteer wanneer handmatige URL vereist is (bijv. on-prem zonder autodiscover).
+- Geef aan hoe verbindingen verschillen voor on-prem (gebruik bestaande EMS of Exchange Management Shell) versus Exchange Online (moderne authenticatie, `Connect-ExchangeOnline`).
+- Maak duidelijk hoe de EWS Managed API wordt geladen (bijv. vanuit assemblies of vooraf geïnstalleerde module).
+
+## Logging, rapportage en tests
+- Log output en rapporten per mailbox naar opgegeven CSV- en/of Excel-paden; gebruik ImportExcel voor `.xlsx`-exports.
+- Rooktest: voer scripts uit met `-WhatIf` (of een expliciete testmodus) met een veilige dummy-configuratie.
+- Pester: voorzie een dummy-configbestand voor tests; test expectations moeten mockbare connecties en rapportpaden dekken.
+
+## Impersonation
+- Wanneer `-ImpersonationSmtp` wordt gebruikt, beschrijf vereiste rechten (bijv. `ApplicationImpersonation`) en valideer het e-mailadres met `[ValidatePattern]`.
+
+## Documentatie
+- Documenteer in `README.md` de vereiste modules, PowerShell-versie, config- en rapportpaden en de benodigde rechten voor impersonation of autodiscover.
