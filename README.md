@@ -27,3 +27,11 @@ Zie [`AGENTS.md`](AGENTS.md) voor de volledige code- en structuurafspraken.
 
 ### Exporteren naar Excel
 Wanneer **ExcelOutputPath** is opgegeven, probeert het script het `ImportExcel`-module te laden en schrijft het een `.xlsx`-bestand naast de CSV. Installeer het module vooraf met `Install-Module ImportExcel` indien nodig.
+
+## Tests
+
+De Pester-tests draaien op versie 5.x en zijn ondergebracht in de map [`tests/`](tests/). Gebruik bijvoorbeeld:
+
+```powershell
+pwsh -NoProfile -Command "Invoke-Pester -Path tests"
+```
