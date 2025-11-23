@@ -47,6 +47,15 @@ Describe 'Find-GhostRoomMeetings.ps1' {
                 $securePassword
             )
 
+            if (-not ('Microsoft.Exchange.WebServices.Data.ExchangeService' -as [type])) {
+                Add-Type -TypeDefinition @"
+namespace Microsoft.Exchange.WebServices.Data
+{
+    public class ExchangeService { }
+}
+"@
+            }
+
             $roomMeetings = @(
                 [pscustomobject]@{
                     Room              = 'room1@contoso.com'
@@ -65,7 +74,7 @@ Describe 'Find-GhostRoomMeetings.ps1' {
             Mock -CommandName Import-ConfigurationFile -MockWith { @{ } }
             Mock -CommandName New-PSSession -MockWith { 'session' }
             Mock -CommandName Import-PSSession -MockWith { }
-            Mock -CommandName Connect-EwsService -MockWith { return [pscustomobject]@{ Name = 'ews' } }
+            Mock -CommandName Connect-EwsService -MockWith { [Microsoft.Exchange.WebServices.Data.ExchangeService]::new() }
             Mock -CommandName Disconnect-ExchangeSession -MockWith { }
             Mock -CommandName Get-RoomMailboxes -MockWith { @([pscustomobject]@{ PrimarySmtpAddress = 'room1@contoso.com' }) }
             Mock -CommandName Get-RoomMeetings -MockWith { return $roomMeetings }
