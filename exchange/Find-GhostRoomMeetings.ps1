@@ -113,10 +113,32 @@ Set-ConfigDefault -Name 'NotificationFrom' -Config $config -BoundParameters $Bou
 Set-ConfigDefault -Name 'NotificationTemplate' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$NotificationTemplate)
 Set-ConfigDefault -Name 'EwsUrl' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsUrl)
 
-if (-not $Credential) {
+$script:ExchangeConnectionType = switch ($ConnectionType) {
+    'EXO'   { 'EXO' }
+    'Auto'  {
+        if ($ExchangeUri -match 'outlook\.office365\.com' -or $ExchangeUri -match 'ps\.outlook\.com' -or $ExchangeUri -match 'office365\.com') { 'EXO' } else { 'OnPrem' }
+    }
+    default { 'OnPrem' }
+}
+
+function New-TemporaryCredential {
+    [CmdletBinding()]
+    param(
+        [Parameter()][ValidateNotNullOrEmpty()][string]$UserName = 'test.user@contoso.com'
+    )
+
+    $secureString = New-Object System.Security.SecureString
+    foreach ($character in ([guid]::NewGuid().ToString('N')).ToCharArray()) {
+        $secureString.AppendChar($character)
+    }
+
+    $secureString.MakeReadOnly()
+    return [pscredential]::new($UserName, $secureString)
+}
+
+if (-not $Credential -and $script:ExchangeConnectionType -eq 'OnPrem') {
     if ($TestMode -or $script:IsDotSourced) {
-        $dummyPassword = ConvertTo-SecureString 'P@ssw0rd!' -AsPlainText -Force
-        $Credential = [pscredential]::new('test.user@contoso.com', $dummyPassword)
+        $Credential = New-TemporaryCredential
     } else {
         $Credential = Get-Credential -Message 'Enter Exchange/AD credentials'
     }
@@ -127,26 +149,18 @@ if ($SendInquiry -and -not $NotificationFrom) {
 }
 
 if (-not $ImpersonationSmtp) {
-    if ($Credential.UserName -match '@') {
+    if ($Credential -and $Credential.UserName -match '@') {
         $ImpersonationSmtp = $Credential.UserName
     } else {
         throw 'Provide -ImpersonationSmtp (SMTP address) for EWS Autodiscover and impersonation.'
     }
 }
 
-$script:ExchangeConnectionType = switch ($ConnectionType) {
-    'EXO'   { 'EXO' }
-    'Auto'  {
-        if ($ExchangeUri -match 'outlook\.office365\.com' -or $ExchangeUri -match 'ps\.outlook\.com' -or $ExchangeUri -match 'office365\.com') { 'EXO' } else { 'OnPrem' }
-    }
-    default { 'OnPrem' }
-}
-
 function Connect-ExchangeSession {
     [CmdletBinding()]
     param(
         [Parameter()][ValidateNotNullOrEmpty()][string]$ConnectionUri,
-        [Parameter()][ValidateNotNull()][System.Management.Automation.PSCredential]$Credential,
+        [Parameter()][System.Management.Automation.PSCredential]$Credential,
         [Parameter(Mandatory)][ValidateSet('OnPrem','EXO')][string]$Type,
         [Parameter()][switch]$TestMode
     )
@@ -162,13 +176,24 @@ function Connect-ExchangeSession {
         }
 
         Write-Verbose 'Connecting to Exchange Online with modern authentication.'
-        Connect-ExchangeOnline -UserPrincipalName $Credential.UserName -Credential $Credential -ShowBanner:$false -CommandName Get-ExoMailbox,Get-ExoRecipient | Out-Null
+        $connectParams = @{ ShowBanner = $false; CommandName = 'Get-ExoMailbox','Get-ExoRecipient' }
+
+        if ($Credential) {
+            $connectParams['Credential'] = $Credential
+            $connectParams['UserPrincipalName'] = $Credential.UserName
+        }
+
+        Connect-ExchangeOnline @connectParams | Out-Null
         return $null
     }
 
     if ($TestMode) {
         Write-Verbose 'Test mode enabled; skipping on-prem Exchange session creation.'
         return $null
+    }
+
+    if (-not $Credential) {
+        throw 'Provide -Credential for on-premises connections.'
     }
 
     Write-Verbose "Opening remote Exchange PowerShell session to $ConnectionUri"
@@ -423,6 +448,11 @@ $endWindow = (Get-Date).AddMonths($MonthsAhead)
 if ($TestMode) {
     Write-Verbose 'Test mode enabled; skipping Exchange/EWS connections and mailbox scan.'
     return
+}
+
+$credentialMissingMessage = 'A credential is required to authenticate to EWS for mailbox scans. Provide -Credential explicitly or configure a secure retrieval method.'
+if (-not $Credential) {
+    throw $credentialMissingMessage
 }
 
 $exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri -Credential $Credential -Type $script:ExchangeConnectionType -TestMode:$TestMode

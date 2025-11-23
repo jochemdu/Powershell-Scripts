@@ -39,7 +39,7 @@ describe 'Find-GhostRoomMeetings EXO pathway' {
     It 'skips Connect-ExchangeOnline in test mode' {
         Mock -CommandName Connect-ExchangeOnline -MockWith { throw 'Should not connect' }
 
-        $session = Connect-ExchangeSession -Type 'EXO' -TestMode -Credential (New-Object System.Management.Automation.PSCredential('user@contoso.com',(ConvertTo-SecureString 'P@ssw0rd!' -AsPlainText -Force)))
+        $session = Connect-ExchangeSession -Type 'EXO' -TestMode -Credential (New-TemporaryCredential -UserName 'user@contoso.com')
 
         $session | Should -Be $null
         Assert-MockCalled -CommandName Connect-ExchangeOnline -Times 0 -Exactly
