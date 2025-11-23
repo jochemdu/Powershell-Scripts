@@ -29,6 +29,8 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$OutputPath = (Join-Path -Path $PWD -ChildPath 'ghost-meetings-report.csv'),
 
+    [Parameter()][string]$ExcelOutputPath = $null,
+
     [Parameter()][ValidateNotNullOrEmpty()][string]$OrganizationSmtpSuffix = 'contoso.com',
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$ImpersonationSmtp,
@@ -97,6 +99,7 @@ Set-ConfigDefault -Name 'EwsAssemblyPath' -Config $config -BoundParameters $Boun
 Set-ConfigDefault -Name 'MonthsAhead' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsAhead)
 Set-ConfigDefault -Name 'MonthsBehind' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsBehind)
 Set-ConfigDefault -Name 'OutputPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$OutputPath)
+Set-ConfigDefault -Name 'ExcelOutputPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ExcelOutputPath)
 Set-ConfigDefault -Name 'OrganizationSmtpSuffix' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$OrganizationSmtpSuffix)
 Set-ConfigDefault -Name 'ImpersonationSmtp' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ImpersonationSmtp)
 Set-ConfigDefault -Name 'SendInquiry' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$SendInquiry) -IsSwitch
@@ -341,9 +344,26 @@ try {
     if (-not (Test-Path -Path $outputDirectory)) {
         New-Item -Path $outputDirectory -ItemType Directory | Out-Null
     }
+
+    if ($ExcelOutputPath) {
+        $excelDirectory = Split-Path -Path $ExcelOutputPath -Parent
+        if (-not (Test-Path -Path $excelDirectory)) {
+            New-Item -Path $excelDirectory -ItemType Directory | Out-Null
+        }
+    }
     $results = Find-GhostMeetings -Service $ews -OrganizationSuffix $OrganizationSmtpSuffix -SendInquiry:$SendInquiry -NotificationFrom $NotificationFrom -NotificationTemplate $NotificationTemplate -WindowStart $startWindow -WindowEnd $endWindow -Verbose:$VerbosePreference
     $results | Export-Csv -NoTypeInformation -Path $OutputPath
     Write-Host "Ghost meeting report saved to $OutputPath" -ForegroundColor Green
+
+    if ($ExcelOutputPath) {
+        if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
+            throw "ImportExcel module is required to export to Excel. Install-Module ImportExcel and try again."
+        }
+
+        Import-Module ImportExcel -ErrorAction Stop
+        $results | Export-Excel -Path $ExcelOutputPath -WorksheetName 'GhostMeetings' -AutoSize
+        Write-Host "Ghost meeting Excel report saved to $ExcelOutputPath" -ForegroundColor Green
+    }
 }
 finally {
     if ($exchangeSession) {
