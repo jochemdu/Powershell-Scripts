@@ -45,6 +45,10 @@
 .PARAMETER ConfigPath
     Optional JSON file to pre-populate parameters (credentials excluded).
 
+.PARAMETER SecretsPath
+    Optional PSD1 secrets file with organization defaults (domain, vault, service account, EWS settings).
+    Secrets are resolved via SecretManagement; the PSD1 should only contain non-sensitive identifiers.
+
 .PARAMETER TestMode
     Skips live connectivity for automated tests and fills in dummy credentials when needed.
 
@@ -60,6 +64,7 @@
 .NOTES
     Requires Exchange Management Shell or ExchangeOnlineManagement, plus the EWS Managed API.
     Run with an account that has ApplicationImpersonation (EXO) or equivalent impersonation rights.
+    Author: PowerShell-Scripts Team
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -88,6 +93,8 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$ConfigPath,
 
+    [Parameter()][ValidateNotNullOrEmpty()][string]$SecretsPath,
+
     [Parameter()][switch]$TestMode
 )
 
@@ -113,6 +120,23 @@ function Import-ConfigurationFile {
     }
 }
 
+function Import-SecretsFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Path
+    )
+
+    if (-not (Test-Path -Path $Path)) {
+        throw "Secrets file not found at '$Path'"
+    }
+
+    try {
+        return Import-PowerShellDataFile -Path $Path
+    } catch {
+        throw "Secrets file '$Path' is not a valid PSD1: $($_.Exception.Message)"
+    }
+}
+
 function Set-ConfigDefault {
     [CmdletBinding()]
     param(
@@ -132,6 +156,36 @@ function Set-ConfigDefault {
     } else {
         $Variable.Value = $Config.$Name
     }
+}
+
+function Resolve-SecretCredential {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Secrets,
+        [Parameter()][switch]$TestMode
+    )
+
+    if ($TestMode) {
+        return New-TemporaryCredential
+    }
+
+    if (-not (Get-Command -Name Get-Secret -ErrorAction SilentlyContinue)) {
+        throw 'Microsoft.PowerShell.SecretManagement is required to resolve -SecretsPath credentials.'
+    }
+
+    $vaultName = $Secrets.SecretManagement.VaultName
+    $credentialSecret = $Secrets.ServiceAccount.CredentialSecretName
+
+    if (-not $vaultName -or -not $credentialSecret) {
+        throw 'Secrets file must contain SecretManagement.VaultName and ServiceAccount.CredentialSecretName to resolve credentials.'
+    }
+
+    $credential = Get-Secret -Name $credentialSecret -Vault $vaultName -AsCredential
+    if (-not $credential) {
+        throw "No credential returned from vault '$vaultName' for secret '$credentialSecret'."
+    }
+
+    return $credential
 }
 
 function New-TemporaryCredential {
@@ -362,9 +416,13 @@ function Find-UnderutilizedMeetings {
 }
 
 $config = $null
+$secrets = $null
 $script:BoundScriptParameters = $PSBoundParameters.Clone()
 if ($ConfigPath) {
     $config = Import-ConfigurationFile -Path $ConfigPath
+}
+if ($SecretsPath) {
+    $secrets = Import-SecretsFile -Path $SecretsPath
 }
 
 Set-ConfigDefault -Name 'ExchangeUri' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ExchangeUri)
@@ -378,6 +436,18 @@ Set-ConfigDefault -Name 'MinimumCapacity' -Config $config -BoundParameters $Boun
 Set-ConfigDefault -Name 'MaxParticipants' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MaxParticipants)
 Set-ConfigDefault -Name 'EwsUrl' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsUrl)
 Set-ConfigDefault -Name 'TestMode' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$TestMode) -IsSwitch
+
+if ($secrets) {
+    if ($secrets.ContainsKey('Exchange')) {
+        Set-ConfigDefault -Name 'ConnectionType' -Config $secrets.Exchange -BoundParameters $BoundScriptParameters -Variable ([ref]$ConnectionType)
+        Set-ConfigDefault -Name 'EwsUrl' -Config $secrets.Exchange -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsUrl)
+        Set-ConfigDefault -Name 'ImpersonationSmtp' -Config $secrets.Exchange -BoundParameters $BoundScriptParameters -Variable ([ref]$ImpersonationSmtp)
+    }
+
+    if (-not $Credential -and $secrets.ContainsKey('ServiceAccount') -and $secrets.ContainsKey('SecretManagement')) {
+        $Credential = Resolve-SecretCredential -Secrets $secrets -TestMode:$TestMode
+    }
+}
 
 $script:ExchangeConnectionType = switch ($ConnectionType) {
     'EXO'   { 'EXO' }

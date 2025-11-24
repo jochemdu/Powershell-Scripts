@@ -5,6 +5,7 @@ Scripts voor Exchange Server en Exchange Online beheer.
 ## Secrets en veilige configuratie
 - Bewaar géén wachtwoorden of certificaten in JSON of in de scripts. Gebruik het meegeleverde PSD1-sjabloon `exchange/Secrets.Template.psd1` of een SecretManagement-kluis.
 - Vul het PSD1-sjabloon aan met je tenant-, domein- en serviceaccountvariabelen en verwijs naar SecretManagement-secretnamen in plaats van wachtwoorden.
+- Gebruik `-SecretsPath` op de scripts om de PSD1 in te lezen; het script haalt credentials op via SecretManagement wanneer `SecretManagement.VaultName` en `ServiceAccount.CredentialSecretName` zijn ingevuld.
 - Laad de secrets voordat je het script start en combineer ze met het reguliere JSON-configbestand voor mailboxspecifieke instellingen.
 
 ### Voorbeeld: PSD1-sjabloon laden
@@ -17,6 +18,7 @@ pwsh -NoProfile -File ./exchange/Find-GhostRoomMeetings.ps1 \
     -ExchangeUri 'http://exchange.contoso.com/PowerShell/' \
     -Credential $credential \
     -ImpersonationSmtp $secrets.Exchange.ImpersonationSmtp \
+    -SecretsPath './exchange/Secrets.Template.psd1' \
     -MonthsAhead 6 \
     -OutputPath './reports/ghost-meetings.csv'
 ```
