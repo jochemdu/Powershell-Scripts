@@ -2,15 +2,8 @@
 
 Scripts voor Exchange Server en Exchange Online beheer.
 
-## Secrets en veilige configuratie
-- Bewaar géén wachtwoorden of certificaten in JSON of in de scripts. Gebruik het meegeleverde PSD1-sjabloon `exchange/Secrets.Template.psd1` of een SecretManagement-kluis.
-- Vul het PSD1-sjabloon aan met je tenant-, domein- en serviceaccountvariabelen en verwijs naar SecretManagement-secretnamen in plaats van wachtwoorden.
-- Laad de secrets voordat je het script start en combineer ze met het reguliere JSON-configbestand voor mailboxspecifieke instellingen.
-
 ### Voorbeeld: PSD1-sjabloon laden
 ```powershell
-$secrets = Import-PowerShellDataFile -Path './exchange/Secrets.Template.psd1'
-$credential = Get-Secret -Name $secrets.ServiceAccount.CredentialSecretName -Vault $secrets.SecretManagement.VaultName -AsCredential
 
 pwsh -NoProfile -File ./exchange/Find-GhostRoomMeetings.ps1 \
     -ConnectionType $secrets.Exchange.ConnectionType \
@@ -21,10 +14,6 @@ pwsh -NoProfile -File ./exchange/Find-GhostRoomMeetings.ps1 \
     -OutputPath './reports/ghost-meetings.csv'
 ```
 
-### Voorbeeld: SecretManagement zonder PSD1
-```powershell
-Register-SecretVault -Name 'CompanyVault' -ModuleName Microsoft.PowerShell.SecretManagement
-$credential = Get-Secret -Name 'ExoServiceCredential' -Vault 'CompanyVault' -AsCredential
 
 pwsh -NoProfile -File ./exchange/Find-UnderutilizedRoomBookings.ps1 \
     -ConnectionType EXO \
@@ -39,7 +28,7 @@ pwsh -NoProfile -File ./exchange/Find-UnderutilizedRoomBookings.ps1 \
 Auditeert vergaderingen in zaalpostvakken om zogeheten "ghost meetings" te detecteren waarbij de organisator ontbreekt of gedeactiveerd is.
 
 ### Vereisten
-- PowerShell 5.1 of 7+.
+- PowerShell 1+.
 - On-prem: toegang tot de Exchange Management Shell of een remote PowerShell sessie (`-ExchangeUri`), plus AD-module voor uitschakelstatus.
 - Exchange Online: `ExchangeOnlineManagement`-module en moderne authenticatie via `Connect-ExchangeOnline`.
   - Delegated/OAuth scopes: gebruikersreferentie met passende rollen (bijv. `Organization Management`) of App-Only met `Exchange.ManageAsApp`.
@@ -74,17 +63,13 @@ pwsh -NoProfile -File ./exchange/Find-GhostRoomMeetings.ps1 \
 ### Parameters
 - **ConnectionType**: `OnPrem`, `EXO` of `Auto` (detectie op `ExchangeUri`). Stuurt de juiste cmdlets (`Get-Mailbox` vs. `Get-ExoMailbox`/`Get-ExoRecipient`).
 - **TestMode**: Zet mockbare testmodus aan; slaat daadwerkelijke connecties over en vult dummy-credentials in.
-- Overige kernparameters: zie [root README](../README.md) voor uitleg over EWS, rapportpaden en notificaties.
 
-### Tests en rooktest
-- Pester-rooktest beschikbaar onder `tests/exchange/Find-GhostRoomMeetings.Tests.ps1` (laadt het EXO-pad met mocks/testmodus).
-- Draai alle tests met `Invoke-Pester -Path tests` vanuit de repo-root.
 
 ## Find-UnderutilizedRoomBookings.ps1
 Spoort vergaderingen op waar grote vergaderruimtes (bijv. 6+ plaatsen) geboekt zijn voor slechts één of enkele deelnemers.
 
 ### Vereisten
-- PowerShell 5.1 of 7+.
+- PowerShell 1+.
 - On-prem: toegang tot de Exchange Management Shell of een remote PowerShell sessie (`-ExchangeUri`).
 - Exchange Online: `ExchangeOnlineManagement`-module en moderne authenticatie via `Connect-ExchangeOnline`.
 - EWS Managed API assembly beschikbaar op het opgegeven pad (`-EwsAssemblyPath`).
@@ -105,8 +90,3 @@ pwsh -NoProfile -File ./exchange/Find-UnderutilizedRoomBookings.ps1 \
 - **MinimumCapacity**: Alleen ruimtes scannen met deze minimumcapaciteit of hoger (standaard 6).
 - **MaxParticipants**: Signaleer vergaderingen met maximaal dit aantal deelnemers (standaard 2, telt organisator + aanwezigen).
 - **MonthsAhead/MonthsBehind**: Datumvenster voor de kalenderquery.
-- **TestMode**: Skip daadwerkelijke connecties en gebruik dummy-credentials voor Pester-tests.
-
-### Tests en rooktest
-- Pester-test beschikbaar onder `tests/exchange/Find-UnderutilizedRoomBookings.Tests.ps1` (maakt gebruik van mocks/TestDrive-outputs).
-- Draai alle tests met `Invoke-Pester -Path tests` vanuit de repo-root.
