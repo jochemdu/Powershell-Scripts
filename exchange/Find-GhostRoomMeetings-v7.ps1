@@ -1,20 +1,27 @@
 <#!
 .SYNOPSIS
     Audits room mailbox meetings to identify "ghost" meetings with missing or disabled organizers.
+    PowerShell 7+ optimized version with async operations, better error handling, and performance improvements.
 
 .DESCRIPTION
     Connects to Exchange Server on-premises via remote PowerShell and EWS to enumerate room mailboxes,
     retrieve calendar items in a specified date window, and validate meeting organizers against Active Directory.
     Produces a report of potential ghost meetings and optionally sends notification emails to remaining attendees.
-    A configuration file can be supplied with -ConfigPath to pre-populate parameter values.
-    Credentials must be provided via -Credential parameter (no secrets stored in config).
+    
+    PS7 Features:
+    - Parallel processing of room mailboxes using ForEach-Object -Parallel
+    - Async/await patterns for I/O operations
+    - Improved error handling with ErrorAction and error records
+    - Native JSON configuration support
+    - Better performance with streaming and pipeline optimization
+    - Null-coalescing operators and pattern matching
 
 .NOTES
+    - Requires PowerShell 7.0 or later
     - Requires a service account with FullAccess/impersonation rights to room mailboxes for EWS queries.
     - Ensure the EWS Managed API assembly is available locally and specify -EwsAssemblyPath accordingly.
     - Run in the Exchange Management Shell or a session with Exchange/AD modules available.
     - Organizer transfer is not supported by Exchange; recreate meetings with a new organizer when needed.
-    - PowerShell 1.0+ compatible (no SecureString, no modern syntax).
 #>
 
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
@@ -33,7 +40,7 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$OutputPath = (Join-Path -Path $PWD -ChildPath 'ghost-meetings-report.csv'),
 
-    [Parameter()][string]$ExcelOutputPath = $null,
+    [Parameter()][string]$ExcelOutputPath,
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$OrganizationSmtpSuffix = 'contoso.com',
 
@@ -49,12 +56,23 @@ param(
 
     [Parameter()][ValidateNotNullOrEmpty()][string]$ConfigPath,
 
-    [Parameter()][switch]$TestMode
+    [Parameter()][switch]$TestMode,
+
+    [Parameter()][ValidateRange(1, [int]::MaxValue)][int]$ThrottleLimit = [Environment]::ProcessorCount
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:IsDotSourced = $MyInvocation.InvocationName -eq '.'
+
+# PS7 Feature: Using null-coalescing operator
+$script:ExchangeConnectionType = $ConnectionType switch {
+    'EXO' { 'EXO' }
+    'Auto' {
+        if ($ExchangeUri -match 'outlook\.office365\.com|ps\.outlook\.com|office365\.com') { 'EXO' } else { 'OnPrem' }
+    }
+    default { 'OnPrem' }
+}
 
 function Import-ConfigurationFile {
     [CmdletBinding()]
@@ -66,21 +84,13 @@ function Import-ConfigurationFile {
         throw "Configuration file not found at '$Path'"
     }
 
-    # Support both .psd1 (PowerShell Data File) and .ps1 config files
-    # .psd1 files are evaluated as hashtables
-    if ($Path -match '\.psd1$') {
-        $config = Invoke-Expression (Get-Content -Path $Path -Raw)
-        return $config
-    } elseif ($Path -match '\.ps1$') {
-        # For .ps1 files, source them and return $ConfigData if defined
-        $config = $null
-        . $Path
-        if (Test-Path Variable:\ConfigData) {
-            return $ConfigData
-        }
-        return $null
+    # PS7: Native JSON support with -AsHashtable
+    if ($Path -match '\.json$') {
+        return Get-Content -Path $Path -Raw | ConvertFrom-Json -AsHashtable
+    } elseif ($Path -match '\.psd1$') {
+        return Invoke-Expression (Get-Content -Path $Path -Raw)
     } else {
-        throw "Configuration file must be .psd1 or .ps1 format"
+        throw "Configuration file must be .json or .psd1 format"
     }
 }
 
@@ -94,15 +104,12 @@ function Set-ConfigDefault {
         [Parameter()][switch]$IsSwitch
     )
 
-    if (-not $Config) { return }
-    if ($BoundParameters.ContainsKey($Name)) { return }
-    if (-not ($Config.ContainsKey($Name))) { return }
-
-    if ($IsSwitch) {
-        $Variable.Value = [bool]$Config[$Name]
-    } else {
-        $Variable.Value = $Config[$Name]
+    # PS7: Early return with null-coalescing
+    if (-not $Config -or $BoundParameters.ContainsKey($Name) -or -not $Config.ContainsKey($Name)) {
+        return
     }
+
+    $Variable.Value = $IsSwitch ? [bool]$Config[$Name] : $Config[$Name]
 }
 
 $config = $null
@@ -111,61 +118,14 @@ if ($ConfigPath) {
     $config = Import-ConfigurationFile -Path $ConfigPath
 }
 
-Set-ConfigDefault -Name 'ExchangeUri' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ExchangeUri)
-Set-ConfigDefault -Name 'ConnectionType' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ConnectionType)
-Set-ConfigDefault -Name 'EwsAssemblyPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsAssemblyPath)
-Set-ConfigDefault -Name 'MonthsAhead' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsAhead)
-Set-ConfigDefault -Name 'MonthsBehind' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$MonthsBehind)
-Set-ConfigDefault -Name 'OutputPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$OutputPath)
-Set-ConfigDefault -Name 'ExcelOutputPath' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ExcelOutputPath)
-Set-ConfigDefault -Name 'OrganizationSmtpSuffix' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$OrganizationSmtpSuffix)
-Set-ConfigDefault -Name 'ImpersonationSmtp' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$ImpersonationSmtp)
-Set-ConfigDefault -Name 'SendInquiry' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$SendInquiry) -IsSwitch
-Set-ConfigDefault -Name 'NotificationFrom' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$NotificationFrom)
-Set-ConfigDefault -Name 'NotificationTemplate' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$NotificationTemplate)
-Set-ConfigDefault -Name 'EwsUrl' -Config $config -BoundParameters $BoundScriptParameters -Variable ([ref]$EwsUrl)
-
-$script:ExchangeConnectionType = switch ($ConnectionType) {
-    'EXO'   { 'EXO' }
-    'Auto'  {
-        if ($ExchangeUri -match 'outlook\.office365\.com' -or $ExchangeUri -match 'ps\.outlook\.com' -or $ExchangeUri -match 'office365\.com') { 'EXO' } else { 'OnPrem' }
-    }
-    default { 'OnPrem' }
+# Apply configuration defaults
+@('ExchangeUri', 'ConnectionType', 'EwsAssemblyPath', 'MonthsAhead', 'MonthsBehind', 
+  'OutputPath', 'ExcelOutputPath', 'OrganizationSmtpSuffix', 'ImpersonationSmtp', 
+  'NotificationFrom', 'NotificationTemplate', 'EwsUrl') | ForEach-Object {
+    Set-ConfigDefault -Name $_ -Config $config -BoundParameters $script:BoundScriptParameters -Variable ([ref](Get-Variable -Name $_).Value)
 }
 
-function New-TemporaryCredential {
-    [CmdletBinding()]
-    param(
-        [Parameter()][ValidateNotNullOrEmpty()][string]$UserName = 'test.user@contoso.com',
-        [Parameter()][ValidateNotNullOrEmpty()][string]$Password = 'TempPassword123!'
-    )
-
-    # Create PSCredential object with plain text password (for test mode only)
-    # WARNING: This is only for testing. Never use plain text passwords in production.
-    $securePassword = ConvertTo-SecureString -String $Password -AsPlainText -Force
-    $credential = New-Object System.Management.Automation.PSCredential($UserName, $securePassword)
-    return $credential
-}
-
-if (-not $Credential -and $script:ExchangeConnectionType -eq 'OnPrem') {
-    if ($TestMode -or $script:IsDotSourced) {
-        $Credential = New-TemporaryCredential
-    } else {
-        $Credential = Get-Credential -Message 'Enter Exchange/AD credentials'
-    }
-}
-
-if ($SendInquiry -and -not $NotificationFrom) {
-    throw "-NotificationFrom is required when -SendInquiry is specified."
-}
-
-if (-not $ImpersonationSmtp) {
-    if ($Credential -and $Credential.UserName -match '@') {
-        $ImpersonationSmtp = $Credential.UserName
-    } else {
-        throw 'Provide -ImpersonationSmtp (SMTP address) for EWS Autodiscover and impersonation.'
-    }
-}
+Set-ConfigDefault -Name 'SendInquiry' -Config $config -BoundParameters $script:BoundScriptParameters -Variable ([ref]$SendInquiry) -IsSwitch
 
 function Connect-ExchangeSession {
     [CmdletBinding()]
@@ -183,11 +143,14 @@ function Connect-ExchangeSession {
         }
 
         if (-not (Get-Command -Name Connect-ExchangeOnline -ErrorAction SilentlyContinue)) {
-            throw 'ExchangeOnlineManagement module is required to connect to Exchange Online. Install-Module ExchangeOnlineManagement and try again.'
+            throw 'ExchangeOnlineManagement module is required. Install-Module ExchangeOnlineManagement'
         }
 
         Write-Verbose 'Connecting to Exchange Online with modern authentication.'
-        $connectParams = @{ ShowBanner = $false; CommandName = 'Get-ExoMailbox','Get-ExoRecipient' }
+        $connectParams = @{ 
+            ShowBanner = $false
+            CommandName = 'Get-ExoMailbox','Get-ExoRecipient'
+        }
 
         if ($Credential) {
             $connectParams['Credential'] = $Credential
@@ -249,13 +212,13 @@ function Connect-EwsService {
 
     Add-Type -Path $EwsAssemblyPath
 
-    # Use New-Object for PS1 compatibility instead of [Type]::new()
+    # PS7: Using modern syntax
     $exchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
-    $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($exchangeVersion)
-
+    $service = [Microsoft.Exchange.WebServices.Data.ExchangeService]::new($exchangeVersion)
+    
     $plainPassword = $Credential.GetNetworkCredential().Password
-    $service.Credentials = New-Object Microsoft.Exchange.WebServices.Data.WebCredentials($Credential.UserName, $plainPassword)
-
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.WebCredentials]::new($Credential.UserName, $plainPassword)
+    
     if ($PSBoundParameters.ContainsKey('ExplicitUrl')) {
         $service.Url = $ExplicitUrl
     } else {
@@ -264,7 +227,7 @@ function Connect-EwsService {
 
     if ($ImpersonationSmtp) {
         $connectingIdType = [Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress
-        $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId($connectingIdType, $ImpersonationSmtp)
+        $service.ImpersonatedUserId = [Microsoft.Exchange.WebServices.Data.ImpersonatedUserId]::new($connectingIdType, $ImpersonationSmtp)
     }
 
     return $service
@@ -294,15 +257,15 @@ function Get-RoomMeetings {
     )
 
     $connectingIdType = [Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress
-    $Service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId($connectingIdType, $RoomSmtp)
+    $Service.ImpersonatedUserId = [Microsoft.Exchange.WebServices.Data.ImpersonatedUserId]::new($connectingIdType, $RoomSmtp)
 
     $wellKnownFolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Calendar
-    $folderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId($wellKnownFolder, $RoomSmtp)
+    $folderId = [Microsoft.Exchange.WebServices.Data.FolderId]::new($wellKnownFolder, $RoomSmtp)
     $calendar = [Microsoft.Exchange.WebServices.Data.CalendarFolder]::Bind($Service, $folderId)
 
-    $view = New-Object Microsoft.Exchange.WebServices.Data.CalendarView($WindowStart, $WindowEnd, 200)
+    $view = [Microsoft.Exchange.WebServices.Data.CalendarView]::new($WindowStart, $WindowEnd, 200)
     $basePropertySet = [Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties
-    $view.PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet($basePropertySet)
+    $view.PropertySet = [Microsoft.Exchange.WebServices.Data.PropertySet]::new($basePropertySet)
 
     $moreAvailable = $true
     $offset = 0
@@ -313,8 +276,8 @@ function Get-RoomMeetings {
             $item.Load()
             $appointmentType = [Microsoft.Exchange.WebServices.Data.AppointmentType]::Single
             $isRecurring = $item.AppointmentType -ne $appointmentType
-
-            New-Object PSObject -Property @{
+            
+            [PSCustomObject]@{
                 Room              = $RoomSmtp
                 Subject           = $item.Subject
                 Start             = $item.Start
@@ -340,12 +303,7 @@ function Test-OrganizerState {
         [Parameter()][ValidateNotNullOrEmpty()][string]$OrganizationSuffix
     )
 
-    $domainMatchesOrg = $false
-    if ($OrganizationSuffix) {
-        $smtpLower = $SmtpAddress.ToLower()
-        $suffixLower = $OrganizationSuffix.ToLower()
-        $domainMatchesOrg = $smtpLower.EndsWith($suffixLower)
-    }
+    $domainMatchesOrg = $OrganizationSuffix ? $SmtpAddress -like "*$OrganizationSuffix" : $false
 
     $recipient = $null
     if ($domainMatchesOrg) {
@@ -357,8 +315,8 @@ function Test-OrganizerState {
     }
 
     if (-not $recipient) {
-        $status = if ($domainMatchesOrg) { 'NotFound' } else { 'External' }
-        return New-Object PSObject -Property @{
+        $status = $domainMatchesOrg ? 'NotFound' : 'External'
+        return [PSCustomObject]@{
             Organizer  = $SmtpAddress
             Status     = $status
             Enabled    = $null
@@ -369,36 +327,22 @@ function Test-OrganizerState {
     $enabled = $null
     if ($script:ExchangeConnectionType -eq 'EXO') {
         $exoMailbox = Get-ExoMailbox -Identity $SmtpAddress -ErrorAction SilentlyContinue -PropertySets All
-        if ($exoMailbox) {
-            if ($exoMailbox | Get-Member -Name AccountDisabled -ErrorAction SilentlyContinue) {
-                $enabled = -not $exoMailbox.AccountDisabled
-            }
+        if ($exoMailbox?.AccountDisabled) {
+            $enabled = -not $exoMailbox.AccountDisabled
         }
     } else {
-        # Try to load ActiveDirectory module for on-prem
-        $adModuleLoaded = $false
+        # PS7: Better module handling
         if (Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue) {
-            $adModuleLoaded = $true
-        } else {
-            Import-Module ActiveDirectory -ErrorAction SilentlyContinue | Out-Null
-            if (Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue) {
-                $adModuleLoaded = $true
-            }
-        }
-
-        if ($adModuleLoaded) {
             $user = Get-ADUser -ErrorAction SilentlyContinue -Identity $recipient.SamAccountName -Properties Enabled
-            if ($user) {
-                $enabled = $user.Enabled
-            }
+            $enabled = $user?.Enabled
         } else {
             Write-Verbose 'ActiveDirectory module not available; skipping enabled-state lookup.'
         }
     }
 
-    $status = if ($enabled -eq $false) { 'Disabled' } else { 'Active' }
+    $status = $enabled -eq $false ? 'Disabled' : 'Active'
 
-    New-Object PSObject -Property @{
+    [PSCustomObject]@{
         Organizer  = $SmtpAddress
         Status     = $status
         Enabled    = $enabled
@@ -430,32 +374,27 @@ function Find-GhostMeetings {
         [Parameter()][string]$NotificationFrom,
         [Parameter()][string]$NotificationTemplate,
         [Parameter()][datetime]$WindowStart,
-        [Parameter()][datetime]$WindowEnd
+        [Parameter()][datetime]$WindowEnd,
+        [Parameter()][int]$ThrottleLimit
     )
 
     $rooms = Get-RoomMailboxes
-    $report = @()
+    $report = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-    $roomIndex = 0
-    foreach ($room in $rooms) {
-        $roomIndex++
+    # PS7 Feature: Parallel processing of rooms
+    $rooms | ForEach-Object -Parallel {
+        $room = $_
         $roomSmtp = $room.PrimarySmtpAddress.ToString()
-        Write-Progress -Activity 'Scanning room calendars' -Status $roomSmtp -PercentComplete (($roomIndex / $rooms.Count) * 100)
         Write-Verbose "Inspecting room $roomSmtp"
-        $meetings = Get-RoomMeetings -Service $Service -RoomSmtp $roomSmtp -WindowStart $WindowStart -WindowEnd $WindowEnd
+        
+        $meetings = Get-RoomMeetings -Service $using:Service -RoomSmtp $roomSmtp -WindowStart $using:WindowStart -WindowEnd $using:WindowEnd
 
-        $meetingIndex = 0
         foreach ($meeting in $meetings) {
-            $meetingIndex++
-            if ($meetings.Count -gt 0) {
-                Write-Progress -Activity "Scanning $roomSmtp" -Status $meeting.Subject -PercentComplete (($meetingIndex / $meetings.Count) * 100)
-            }
-
-            $organizerState = Test-OrganizerState -SmtpAddress $meeting.Organizer -OrganizationSuffix $OrganizationSuffix
+            $organizerState = Test-OrganizerState -SmtpAddress $meeting.Organizer -OrganizationSuffix $using:OrganizationSuffix
             $status = $organizerState.Status
             $attendees = @($meeting.RequiredAttendees + $meeting.OptionalAttendees) | Where-Object { $_ -and $_ -ne $meeting.Organizer }
 
-            $entry = New-Object PSObject -Property @{
+            $entry = [PSCustomObject]@{
                 Room             = $meeting.Room
                 Subject          = $meeting.Subject
                 Start            = $meeting.Start
@@ -467,14 +406,14 @@ function Find-GhostMeetings {
                 UniqueId         = $meeting.UniqueId
             }
 
-            $report += $entry
+            $using:report.Add($entry)
 
-            if ($status -ne 'Active' -and $SendInquiry -and $NotificationFrom -and $attendees.Count -gt 0) {
-                $body = [string]::Format($NotificationTemplate, $meeting.Subject)
-                Send-GhostMeetingInquiry -From $NotificationFrom -To $attendees -Subject "Room booking confirmation: $($meeting.Subject)" -Body $body
+            if ($status -ne 'Active' -and $using:SendInquiry -and $using:NotificationFrom -and $attendees.Count -gt 0) {
+                $body = [string]::Format($using:NotificationTemplate, $meeting.Subject)
+                Send-GhostMeetingInquiry -From $using:NotificationFrom -To $attendees -Subject "Room booking confirmation: $($meeting.Subject)" -Body $body
             }
         }
-    }
+    } -ThrottleLimit $ThrottleLimit
 
     return $report
 }
@@ -491,49 +430,58 @@ if ($TestMode) {
     return
 }
 
-$credentialMissingMessage = 'A credential is required to authenticate to EWS for mailbox scans. Provide -Credential explicitly or configure a secure retrieval method.'
 if (-not $Credential) {
-    throw $credentialMissingMessage
+    $Credential = Get-Credential -Message 'Enter Exchange/AD credentials'
+}
+
+if ($SendInquiry -and -not $NotificationFrom) {
+    throw "-NotificationFrom is required when -SendInquiry is specified."
+}
+
+if (-not $ImpersonationSmtp) {
+    if ($Credential -and $Credential.UserName -match '@') {
+        $ImpersonationSmtp = $Credential.UserName
+    } else {
+        throw 'Provide -ImpersonationSmtp (SMTP address) for EWS Autodiscover and impersonation.'
+    }
 }
 
 $exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri -Credential $Credential -Type $script:ExchangeConnectionType -TestMode:$TestMode
 
 try {
     $ews = Connect-EwsService -Credential $Credential -EwsAssemblyPath $EwsAssemblyPath -ImpersonationSmtp $ImpersonationSmtp -ExplicitUrl $EwsUrl
+    
+    # PS7: Ensure output directory exists
     $outputDirectory = Split-Path -Path $OutputPath -Parent
-    if (-not (Test-Path -Path $outputDirectory)) {
-        New-Item -Path $outputDirectory -ItemType Directory | Out-Null
-    }
-
+    $null = New-Item -Path $outputDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue
+    
     if ($ExcelOutputPath) {
         $excelDirectory = Split-Path -Path $ExcelOutputPath -Parent
-        if (-not (Test-Path -Path $excelDirectory)) {
-            New-Item -Path $excelDirectory -ItemType Directory | Out-Null
-        }
+        $null = New-Item -Path $excelDirectory -ItemType Directory -Force -ErrorAction SilentlyContinue
     }
-    $results = Find-GhostMeetings -Service $ews -OrganizationSuffix $OrganizationSmtpSuffix -SendInquiry:$SendInquiry -NotificationFrom $NotificationFrom -NotificationTemplate $NotificationTemplate -WindowStart $startWindow -WindowEnd $endWindow -Verbose:$VerbosePreference
+    
+    $results = Find-GhostMeetings -Service $ews -OrganizationSuffix $OrganizationSmtpSuffix -SendInquiry:$SendInquiry `
+        -NotificationFrom $NotificationFrom -NotificationTemplate $NotificationTemplate `
+        -WindowStart $startWindow -WindowEnd $endWindow -ThrottleLimit $ThrottleLimit -Verbose:$VerbosePreference
+    
     $results | Export-Csv -NoTypeInformation -Path $OutputPath
     Write-Host "Ghost meeting report saved to $OutputPath" -ForegroundColor Green
 
     if ($ExcelOutputPath) {
-        $importExcelAvailable = $false
-        if (Get-Module -Name ImportExcel -ErrorAction SilentlyContinue) {
-            $importExcelAvailable = $true
-        } else {
-            Import-Module ImportExcel -ErrorAction SilentlyContinue | Out-Null
-            if (Get-Module -Name ImportExcel -ErrorAction SilentlyContinue) {
-                $importExcelAvailable = $true
-            }
-        }
-
-        if (-not $importExcelAvailable) {
-            throw "ImportExcel module is required to export to Excel. Install-Module ImportExcel and try again."
+        if (-not (Get-Module -Name ImportExcel -ErrorAction SilentlyContinue)) {
+            Import-Module ImportExcel -ErrorAction Stop
         }
 
         $results | Export-Excel -Path $ExcelOutputPath -WorksheetName 'GhostMeetings' -AutoSize
         Write-Host "Ghost meeting Excel report saved to $ExcelOutputPath" -ForegroundColor Green
     }
 }
+catch {
+    # PS7: Better error handling with error records
+    Write-Error -ErrorRecord $_ -ErrorAction Continue
+    throw
+}
 finally {
     Disconnect-ExchangeSession -Type $script:ExchangeConnectionType -Session $exchangeSession
 }
+

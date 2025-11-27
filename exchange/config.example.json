@@ -1,0 +1,16 @@
+{
+  "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
+  "ConnectionType": "OnPrem",
+  "EwsAssemblyPath": "C:\\Program Files\\Microsoft\\Exchange\\Web Services\\2.2\\Microsoft.Exchange.WebServices.dll",
+  "EwsUrl": null,
+  "MonthsAhead": 12,
+  "MonthsBehind": 0,
+  "OutputPath": "C:\\Reports\\ghost-meetings-report.csv",
+  "ExcelOutputPath": "C:\\Reports\\ghost-meetings-report.xlsx",
+  "OrganizationSmtpSuffix": "contoso.com",
+  "ImpersonationSmtp": "service.account@contoso.com",
+  "SendInquiry": false,
+  "NotificationFrom": "noreply@contoso.com",
+  "NotificationTemplate": "Please confirm if this meeting is still required for {0}."
+}
+
