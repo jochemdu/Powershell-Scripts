@@ -21,15 +21,6 @@
     "Subject": "MyPlace Leave Booking (automatically created)",
     "Body": "Please do not modify this appointment"
   },
-  "UserMapping": {
-    "Strategy": "Email",
-    "DefaultDomain": "contoso.com",
-    "UseActiveDirectory": false,
-    "MappingTable": {
-      "EMP001": "jan.janssen@contoso.com",
-      "EMP002": "piet.pietersen@contoso.com"
-    }
-  },
   "Calendar": {
     "CategoryName": "AFAS Verlof",
     "ShowAs": "OOF",

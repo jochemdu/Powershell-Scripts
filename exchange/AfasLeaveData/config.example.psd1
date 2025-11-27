@@ -31,17 +31,6 @@
         Body    = 'Please do not modify this appointment'
     }
 
-    # Mapping van ITCode/medewerker naar Exchange mailbox
-    UserMapping        = @{
-        Strategy           = 'Mailbox'  # 'Mailbox' (Get-Mailbox), 'Email', 'MappingTable'
-        DefaultDomain      = 'contoso.com'
-        UseActiveDirectory = $false
-        MappingTable       = @{
-            'EMP001' = 'jan.janssen@contoso.com'
-            'EMP002' = 'piet.pietersen@contoso.com'
-        }
-    }
-
     # Calendar event settings
     Calendar           = @{
         ShowAs   = 'OOF'       # 'Free', 'Tentative', 'Busy', 'OOF', 'WorkingElsewhere'
