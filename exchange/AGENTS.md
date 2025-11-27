@@ -38,7 +38,7 @@ Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestand
 - 
 ## Opslag
 - Elk powershellprogramma heeft zijn eigen subdirectory. Een powershell programma kan uit meerdere script bestaand
-- Alle benodigde modules sla je ook op in dezelfde subdirectory in directory modules.
+- Alle benodigde modules sla je ook op in dezelfde subdirectory in directory modules van het powershell programma. Je deelt de modules niet met andere powershell programmas.
 - Configureerbare parameters sla je ook op in de subdirectory in een asart bestand.
 - Elke powershell programma heeft zijn eigen documentatie: README.md, QUICK_REFERENCE.md, USAGE_EXAMPLES.md, changelog.md
 - 

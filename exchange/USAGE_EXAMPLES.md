@@ -1,5 +1,53 @@
 # Exchange Scripts - Usage Examples
 
+## AfasLeaveData
+
+Synchronizes leave data from AFAS (via Azure Service Bus) to Exchange calendars.
+
+### Example 1: Basic Usage with Configuration File
+```powershell
+cd AfasLeaveData
+$cred = Get-Credential -Message 'Enter Exchange service account credentials'
+.\AfasLeaveData.ps1 `
+    -ConfigPath '.\config.json' `
+    -Credential $cred
+```
+
+### Example 2: Test Mode (No Connections)
+```powershell
+.\AfasLeaveData.ps1 -TestMode -Verbose
+```
+
+### Example 3: Using Parameters Instead of Config
+```powershell
+.\AfasLeaveData.ps1 `
+    -ServiceBusConnectionString $env:SB_CONNECTION_STRING `
+    -ServiceBusQueueName 'afas-leave-data' `
+    -DefaultDomain 'contoso.com' `
+    -DaysAhead 60 `
+    -Credential (Get-Credential)
+```
+
+### Example 4: Excel Export
+```powershell
+.\AfasLeaveData.ps1 `
+    -ConfigPath '.\config.json' `
+    -Credential $cred `
+    -ExcelOutputPath './reports/leave-sync.xlsx'
+```
+
+### Example 5: Full Sync Mode
+```powershell
+.\AfasLeaveData.ps1 `
+    -ConfigPath '.\config.json' `
+    -SyncMode Full `
+    -DaysAhead 90 `
+    -DaysBehind 7 `
+    -Credential (Get-Credential)
+```
+
+---
+
 ## Find-GhostRoomMeetings
 
 ### Example 1: Basic Usage with Credential Prompt

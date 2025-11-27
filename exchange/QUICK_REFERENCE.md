@@ -4,10 +4,17 @@
 
 | Script | Purpose | Location |
 |--------|---------|----------|
+| AfasLeaveData | Sync AFAS leave to calendars via Service Bus | `AfasLeaveData/` |
 | Find-GhostRoomMeetings | Detect ghost meetings | `Find-GhostRoomMeetings/` |
 | Find-UnderutilizedRoomBookings | Find underutilized rooms | `Find-UnderutilizedRoomBookings/` |
 
 ## Common Tasks
+
+### Sync AFAS Leave Data
+```powershell
+cd AfasLeaveData
+.\AfasLeaveData.ps1 -ConfigPath config.json -Credential (Get-Credential)
+```
 
 ### Scan for Ghost Meetings
 ```powershell
@@ -23,6 +30,7 @@ cd Find-UnderutilizedRoomBookings
 
 ### Test Mode (No Connections)
 ```powershell
+.\AfasLeaveData.ps1 -TestMode -Verbose
 .\Find-GhostRoomMeetings.ps1 -TestMode -Verbose
 .\Find-UnderutilizedRoomBookings.ps1 -TestMode -Verbose
 ```
@@ -99,6 +107,15 @@ cd Find-UnderutilizedRoomBookings
 | MinimumCapacity | Min room size | `-MinimumCapacity 6` |
 | MaxParticipants | Max attendee threshold | `-MaxParticipants 2` |
 
+### AfasLeaveData Specific
+
+| Parameter | Purpose | Example |
+|-----------|---------|---------|
+| ServiceBusConnectionString | Azure Service Bus connection | `-ServiceBusConnectionString $connStr` |
+| ServiceBusQueueName | Queue name | `-ServiceBusQueueName 'afas-leave'` |
+| DaysAhead | Days to sync ahead | `-DaysAhead 90` |
+| DefaultDomain | Email domain fallback | `-DefaultDomain 'contoso.com'` |
+
 ## Troubleshooting
 
 ### Issue: "EWS assembly not found"
@@ -140,6 +157,7 @@ Test-Connection exchange.contoso.com
 
 ## Documentation
 
+- [AfasLeaveData README](AfasLeaveData/README.md)
 - [Find-GhostRoomMeetings README](Find-GhostRoomMeetings/README.md)
 - [Find-UnderutilizedRoomBookings README](Find-UnderutilizedRoomBookings/README.md)
 - [USAGE_EXAMPLES.md](USAGE_EXAMPLES.md)

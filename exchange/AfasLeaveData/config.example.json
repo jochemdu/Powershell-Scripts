@@ -1,0 +1,56 @@
+{
+  "Connection": {
+    "Type": "OnPrem",
+    "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
+    "EwsUrl": null,
+    "Autodiscover": true
+  },
+  "Credential": {
+    "Username": "svc_account",
+    "PasswordFile": "C:\\ScheduledTasks\\AfasLeaveData\\password.txt"
+  },
+  "Impersonation": {
+    "SmtpAddress": "service.account@contoso.com"
+  },
+  "Api": {
+    "LeaveDataEndpoint": "https://integrationbus.contoso.com:7843/api/v1/getLeaveData",
+    "CanceledLeaveEndpoint": "https://integrationbus.contoso.com:7843/api/v1/getCanceledLeaveData",
+    "ProxyUrl": null
+  },
+  "LeaveSettings": {
+    "Subject": "MyPlace Leave Booking (automatically created)",
+    "Body": "Please do not modify this appointment"
+  },
+  "UserMapping": {
+    "Strategy": "Email",
+    "DefaultDomain": "contoso.com",
+    "UseActiveDirectory": false,
+    "MappingTable": {
+      "EMP001": "jan.janssen@contoso.com",
+      "EMP002": "piet.pietersen@contoso.com"
+    }
+  },
+  "Calendar": {
+    "CategoryName": "AFAS Verlof",
+    "ShowAs": "OOF",
+    "Reminder": false,
+    "AllDayDefault": true,
+    "SubjectPrefix": "[Verlof] "
+  },
+  "Sync": {
+    "Mode": "Delta",
+    "DaysAhead": 90,
+    "DaysBehind": 0,
+    "DeleteOrphans": false,
+    "UpdateExisting": true
+  },
+  "Paths": {
+    "ScriptPath": "C:\\ScheduledTasks\\AfasLeaveData",
+    "ProcessedPath": "C:\\ScheduledTasks\\AfasLeaveData\\Processed",
+    "LogPath": "C:\\ScheduledTasks\\AfasLeaveData\\Logs",
+    "OutputPath": "./reports/afas-leave-sync-report.csv",
+    "ExcelOutputPath": null
+  },
+  "EwsAssemblyPath": "C:\\Program Files\\Microsoft\\Exchange\\Web Services\\2.2\\Microsoft.Exchange.WebServices.dll",
+  "Verbose": false
+}

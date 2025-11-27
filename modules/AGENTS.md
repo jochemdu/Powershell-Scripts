@@ -34,6 +34,7 @@ Deze richtlijnen gelden voor alle modules onder `modules/` en alle submappen daa
 ## Dependencies
 - Geen hardcoded paden in modules of tests; gebruik parameterisatie of configuratiebestanden.
 - Definieer externe module-afhankelijkheden in het `.psd1` manifest (`RequiredModules` of `Prerelease` info indien relevant) in plaats van handmatige checks in code.
+Elk powershell programma slaat de gebruikte module op in zijn eigen folder in de subdirectory modules.
 
 ## PR/documentatie
 - Bij nieuwe of gewijzigde modules hoort een bijgewerkte `README.md` in de relevante domeinmap en/of een toelichting in `docs/`.

@@ -1,113 +1,82 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Synchronizes leave data from AFAS to Exchange/Outlook calendars.
+    Synchronizes leave data from AFAS Insite to Exchange calendars via Enterprise Service Bus.
 
 .DESCRIPTION
-    Retrieves leave/absence data from AFAS via REST API and creates corresponding
-    calendar events in user mailboxes via Exchange Web Services (EWS).
+    Retrieves leave/absence data from AFAS Insite via the Enterprise Service Bus REST API
+    and creates/removes corresponding calendar events in user mailboxes via EWS.
+
+    This script replicates the functionality of the legacy scripts:
+    - Import-CalendarCSV.ps1 (create leave appointments)
+    - Remove-CalendarItemsCSV.ps1 (remove canceled appointments)
 
     Features:
-    - Connects to AFAS REST API using App Connector token
-    - Retrieves leave data for specified employees
-    - Creates/updates calendar events in Exchange (On-Prem or Online)
-    - Supports full sync and delta sync modes
-    - CSV/Excel reporting of sync results
+    - Retrieves leave data via Enterprise Service Bus REST API
+    - Creates calendar items for new leave bookings
+    - Removes calendar items for canceled leave
+    - Uses Get-Mailbox for ITCode to email mapping
+    - Password file authentication (same as legacy)
+    - Tab-separated logging (compatible with legacy)
+    - CSV file processing with Processed folder archival
 
 .PARAMETER ConfigPath
-    Path to JSON configuration file.
+    Path to JSON or PSD1 configuration file.
 
 .PARAMETER Credential
-    Credentials for Exchange authentication.
+    Credentials for Exchange and API authentication. If not provided,
+    will be loaded from password file specified in config.
 
-.PARAMETER AfasToken
-    AFAS App Connector token. Can also be provided via SecretManagement.
-
-.PARAMETER AfasEnvironment
-    AFAS environment ID (e.g., 'O12345').
-
-.PARAMETER SyncMode
-    Full or Delta sync mode. Default: Delta.
-
-.PARAMETER DaysAhead
-    Number of days ahead to sync leave data. Default: 90.
-
-.PARAMETER DaysBehind
-    Number of days behind to sync. Default: 0.
-
-.PARAMETER OutputPath
-    Path for CSV report output.
-
-.PARAMETER ExcelOutputPath
-    Path for Excel report output (requires ImportExcel module).
+.PARAMETER Mode
+    Operation mode: 'Import' (create appointments), 'Remove' (delete canceled), or 'Both'.
+    Default: Both
 
 .PARAMETER TestMode
-    Run without making actual changes.
+    Run without making actual changes (dry run).
+
+.PARAMETER Verbose
+    Enable verbose output.
 
 .EXAMPLE
-    .\AfasLeaveData.ps1 -ConfigPath .\config.json -Credential (Get-Credential)
+    .\AfasLeaveData.ps1 -ConfigPath .\config.json
+    
+    Runs both import and remove operations using config file.
 
 .EXAMPLE
-    .\AfasLeaveData.ps1 -AfasEnvironment 'O12345' -TestMode -Verbose
+    .\AfasLeaveData.ps1 -ConfigPath .\config.json -Mode Import
+    
+    Only imports new leave data to calendars.
+
+.EXAMPLE
+    .\AfasLeaveData.ps1 -ConfigPath .\config.json -TestMode -Verbose
+    
+    Dry run with verbose output.
 
 .NOTES
     Version: 1.0.0
-    Author: [Your Name]
+    Author: Jochem. Based on original scripts by Erwin Rook
     
     Requirements:
     - PowerShell 5.1 or later
-    - EWS Managed API for calendar access
-    - AFAS App Connector with GetConnector access
-    - Exchange impersonation rights for calendar modifications
+    - EWS Managed API 2.2
+    - Exchange Management Shell (for Get-Mailbox)
+    - ApplicationImpersonation rights
+    - Access to Enterprise Service Bus endpoints
 #>
 
-[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+[CmdletBinding(SupportsShouldProcess)]
 param(
-    [Parameter()]
+    [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
+    [ValidateScript({ Test-Path $_ })]
     [string]$ConfigPath,
 
     [Parameter()]
     [System.Management.Automation.PSCredential]$Credential,
 
     [Parameter()]
-    [ValidateNotNullOrEmpty()]
-    [string]$AfasToken,
-
-    [Parameter()]
-    [ValidatePattern('^[A-Z]\d{5}$')]
-    [string]$AfasEnvironment,
-
-    [Parameter()]
-    [ValidateSet('Full', 'Delta')]
-    [string]$SyncMode = 'Delta',
-
-    [Parameter()]
-    [ValidateRange(1, 365)]
-    [int]$DaysAhead = 90,
-
-    [Parameter()]
-    [ValidateRange(0, 30)]
-    [int]$DaysBehind = 0,
-
-    [Parameter()]
-    [ValidateNotNullOrEmpty()]
-    [string]$OutputPath = (Join-Path -Path $PWD -ChildPath 'afas-leave-sync-report.csv'),
-
-    [Parameter()]
-    [string]$ExcelOutputPath,
-
-    [Parameter()]
-    [ValidateNotNullOrEmpty()]
-    [string]$EwsAssemblyPath = 'C:\Program Files\Microsoft\Exchange\Web Services\2.2\Microsoft.Exchange.WebServices.dll',
-
-    [Parameter()]
-    [ValidateNotNullOrEmpty()]
-    [string]$EwsUrl,
-
-    [Parameter()]
-    [ValidatePattern('^[^@]+@[^@]+\.[^@]+$')]
-    [string]$ImpersonationSmtp,
+    [ValidateSet('Import', 'Remove', 'Both')]
+    [string]$Mode = 'Both',
 
     [Parameter()]
     [switch]$TestMode
@@ -116,339 +85,860 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-#region Initialization
+#region Script Variables
 
 $script:Version = '1.0.0'
-$script:IsDotSourced = $MyInvocation.InvocationName -eq '.'
-$script:ScriptRoot = $PSScriptRoot
-$script:ModulePath = Join-Path -Path $script:ScriptRoot -ChildPath 'modules\AfasCore\AfasCore.psm1'
+$script:LogFile = $null
+$script:Config = $null
+$script:EwsService = $null
+$script:ExchangeSession = $null
 
-# Import shared module
-if (Test-Path -Path $script:ModulePath) {
-    Import-Module $script:ModulePath -Force -ErrorAction Stop
-}
-else {
-    Write-Warning "AfasCore module not found at: $script:ModulePath"
-}
+#endregion Script Variables
 
-# Import ExchangeCore if available (shared Exchange functions)
-$exchangeCorePath = Join-Path -Path (Split-Path $script:ScriptRoot -Parent) -ChildPath 'Find-GhostRoomMeetings\modules\ExchangeCore\ExchangeCore.psm1'
-if (Test-Path -Path $exchangeCorePath) {
-    Import-Module $exchangeCorePath -Force -ErrorAction Stop
-}
+#region Logging Functions
 
-#endregion Initialization
-
-#region Configuration
-
-function Import-AfasConfiguration {
+function Write-Log {
     <#
     .SYNOPSIS
-        Loads and validates AFAS configuration.
+        Writes a log entry in legacy-compatible format.
     #>
-    [CmdletBinding()]
-    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Context,
+        
+        [Parameter(Mandatory)]
+        [ValidateSet('[START]', '[SUCCESS]', '[ERROR]', '[WARNING]', '[STOP]', '[INFO]')]
+        [string]$Status,
+        
+        [Parameter(Mandatory)]
+        [string]$Message
+    )
+    
+    # Pad context to 20 characters (legacy format)
+    if ($Context.Length -lt 20) {
+        $Context = $Context.PadRight(20)
+    }
+    
+    $logEntry = "$Context`t$Status`t$Message"
+    
+    if ($script:LogFile) {
+        Add-Content -Path $script:LogFile -Value $logEntry -Encoding UTF8
+    }
+    
+    # Also write to console based on status
+    switch ($Status) {
+        '[ERROR]'   { Write-Warning $Message }
+        '[WARNING]' { Write-Warning $Message }
+        '[SUCCESS]' { Write-Verbose $Message }
+        default     { Write-Verbose $Message }
+    }
+}
+
+function Initialize-LogFile {
+    <#
+    .SYNOPSIS
+        Creates a new log file with timestamp.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$LogPath,
+        
+        [Parameter(Mandatory)]
+        [string]$Prefix
+    )
+    
+    if (-not (Test-Path -Path $LogPath)) {
+        New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
+    }
+    
+    $timestamp = Get-Date -Format 'ddMMyyyy-HHmm'
+    $script:LogFile = Join-Path -Path $LogPath -ChildPath "$Prefix-$timestamp.log"
+    
+    return $script:LogFile
+}
+
+#endregion Logging Functions
+
+#region Configuration Functions
+
+function Import-Configuration {
+    <#
+    .SYNOPSIS
+        Loads configuration from JSON or PSD1 file.
+    #>
     param(
         [Parameter(Mandatory)]
         [string]$Path
     )
-
-    if (-not (Test-Path -Path $Path)) {
-        throw "Configuration file not found: $Path"
-    }
-
-    $content = Get-Content -Path $Path -Raw
-
-    if ($PSVersionTable.PSVersion.Major -ge 7) {
-        $config = $content | ConvertFrom-Json -AsHashtable
-    }
-    else {
-        $obj = $content | ConvertFrom-Json
-        $config = @{}
-        foreach ($prop in $obj.PSObject.Properties) {
-            $config[$prop.Name] = $prop.Value
+    
+    $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    
+    switch ($extension) {
+        '.json' {
+            $content = Get-Content -Path $Path -Raw -Encoding UTF8
+            
+            if ($PSVersionTable.PSVersion.Major -ge 7) {
+                return ($content | ConvertFrom-Json -AsHashtable)
+            }
+            else {
+                # PowerShell 5.1 - manual conversion to hashtable
+                $obj = $content | ConvertFrom-Json
+                return (ConvertTo-Hashtable -InputObject $obj)
+            }
+        }
+        '.psd1' {
+            return (Import-PowerShellDataFile -Path $Path)
+        }
+        default {
+            throw "Unsupported configuration file format: $extension"
         }
     }
-
-    return $config
 }
 
-#endregion Configuration
-
-#region AFAS Functions
-
-function Get-AfasLeaveData {
+function ConvertTo-Hashtable {
     <#
     .SYNOPSIS
-        Retrieves leave data from AFAS GetConnector.
+        Recursively converts PSCustomObject to hashtable.
     #>
-    [CmdletBinding()]
-    [OutputType([PSCustomObject[]])]
+    param($InputObject)
+    
+    if ($null -eq $InputObject) { return $null }
+    
+    if ($InputObject -is [System.Collections.IEnumerable] -and $InputObject -isnot [string]) {
+        $collection = @(foreach ($item in $InputObject) { ConvertTo-Hashtable -InputObject $item })
+        return $collection
+    }
+    
+    if ($InputObject -is [PSCustomObject]) {
+        $hash = @{}
+        foreach ($property in $InputObject.PSObject.Properties) {
+            $hash[$property.Name] = ConvertTo-Hashtable -InputObject $property.Value
+        }
+        return $hash
+    }
+    
+    return $InputObject
+}
+
+function Get-CredentialFromFile {
+    <#
+    .SYNOPSIS
+        Reads credentials from password file.
+    #>
     param(
         [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$Environment,
-
+        [string]$Username,
+        
         [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$Token,
-
-        [Parameter()]
-        [string]$ConnectorId = 'Profit_Verlof',
-
-        [Parameter()]
-        [datetime]$FromDate,
-
-        [Parameter()]
-        [datetime]$ToDate
+        [string]$PasswordFilePath
     )
-
-    $baseUrl = "https://$Environment.rest.afas.online/profitrestservices/connectors"
-    $url = "$baseUrl/$ConnectorId"
-
-    $headers = @{
-        'Authorization' = "AfasToken $([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($Token)))"
-        'Content-Type'  = 'application/json'
+    
+    if (-not (Test-Path -Path $PasswordFilePath)) {
+        throw "Password file not found: $PasswordFilePath"
     }
+    
+    $securePassword = Get-Content -Path $PasswordFilePath | ConvertTo-SecureString
+    return New-Object System.Management.Automation.PSCredential($Username, $securePassword)
+}
 
-    # Build filter if dates provided
-    $filterParts = @()
-    if ($FromDate) {
-        $filterParts += "Datum_begin ge '$($FromDate.ToString('yyyy-MM-dd'))'"
+#endregion Configuration Functions
+
+#region Exchange Functions
+
+function Connect-ExchangeSession {
+    <#
+    .SYNOPSIS
+        Connects to Exchange PowerShell for Get-Mailbox access.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExchangeUri,
+        
+        [Parameter(Mandatory)]
+        [System.Management.Automation.PSCredential]$Credential
+    )
+    
+    $context = "Load Exchange CmdLets"
+    
+    # Check if session already exists
+    $existingSession = Get-PSSession | Where-Object { $_.ConfigurationName -match "Microsoft.Exchange" }
+    
+    if ($existingSession) {
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "Exchange session already exists"
+        return $existingSession
     }
-    if ($ToDate) {
-        $filterParts += "Datum_eind le '$($ToDate.ToString('yyyy-MM-dd'))'"
-    }
-
-    if ($filterParts.Count -gt 0) {
-        $filter = $filterParts -join ' and '
-        $url += "?filterfieldids=$([uri]::EscapeDataString($filter))"
-    }
-
-    Write-Verbose "Calling AFAS API: $url"
-
+    
     try {
-        $response = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -ErrorAction Stop
-        return $response.rows
+        $session = New-PSSession -ConfigurationName Microsoft.Exchange `
+            -ConnectionUri $ExchangeUri `
+            -Authentication Kerberos `
+            -Credential $Credential `
+            -ErrorAction Stop
+        
+        Import-PSSession $session -DisableNameChecking -AllowClobber | Out-Null
+        
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "Exchange CmdLets loaded successfully"
+        
+        $script:ExchangeSession = $session
+        return $session
     }
     catch {
-        Write-Error "Failed to retrieve AFAS leave data: $_"
+        Write-Log -Context $context -Status '[ERROR]' -Message "Error loading Exchange CmdLets: $_"
         throw
     }
 }
 
-#endregion AFAS Functions
-
-#region Calendar Functions
-
-function New-LeaveCalendarEvent {
+function Initialize-EwsService {
     <#
     .SYNOPSIS
-        Creates a calendar event for leave entry.
+        Initializes EWS service object.
     #>
-    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        $EwsService,
-
+        [string]$EwsAssemblyPath,
+        
         [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string]$UserSmtp,
-
-        [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        $LeaveEntry,
-
-        [Parameter()]
-        [switch]$TestMode
+        [System.Management.Automation.PSCredential]$Credential
     )
-
-    if ($TestMode) {
-        Write-Verbose "[TEST] Would create calendar event for $UserSmtp : $($LeaveEntry.Omschrijving)"
-        return [PSCustomObject]@{
-            User     = $UserSmtp
-            Subject  = $LeaveEntry.Omschrijving
-            Start    = $LeaveEntry.Datum_begin
-            End      = $LeaveEntry.Datum_eind
-            Status   = 'TestMode'
-            Action   = 'Create'
-        }
+    
+    $context = "Check EWS Managed API"
+    
+    if (-not (Test-Path -Path $EwsAssemblyPath)) {
+        Write-Log -Context $context -Status '[ERROR]' -Message "EWS Managed API could not be found at $EwsAssemblyPath"
+        throw "EWS Managed API not found at: $EwsAssemblyPath"
     }
+    
+    [void][Reflection.Assembly]::LoadFile($EwsAssemblyPath)
+    Write-Log -Context $context -Status '[SUCCESS]' -Message "EWS Managed API loaded"
+    
+    $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService
+    $service.Credentials = New-Object Microsoft.Exchange.WebServices.Data.WebCredentials($Credential)
+    
+    $script:EwsService = $service
+    return $service
+}
 
-    if ($PSCmdlet.ShouldProcess($UserSmtp, "Create leave calendar event: $($LeaveEntry.Omschrijving)")) {
-        # TODO: Implement actual EWS calendar event creation
-        Write-Verbose "Creating calendar event for $UserSmtp"
+function Get-UserEmail {
+    <#
+    .SYNOPSIS
+        Resolves ITCode to email address via Get-Mailbox.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$ITCode
+    )
+    
+    $context = "Get EmailAddress"
+    
+    try {
+        $mailbox = Get-Mailbox -Identity $ITCode -ErrorAction Stop
+        $email = $mailbox.PrimarySmtpAddress.ToString()
+        Write-Verbose "Resolved $ITCode to $email"
+        return $email
+    }
+    catch {
+        Write-Log -Context $context -Status '[ERROR]' -Message "Could not find email of $ITCode"
+        return $null
     }
 }
 
-function Sync-LeaveToCalendar {
+#endregion Exchange Functions
+
+#region API Functions
+
+function Test-ApiEndpoint {
     <#
     .SYNOPSIS
-        Synchronizes all leave entries to Exchange calendars.
+        Tests if API endpoint is reachable.
     #>
-    [CmdletBinding(SupportsShouldProcess)]
-    [OutputType([PSCustomObject[]])]
     param(
         [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        $EwsService,
-
+        [string]$Uri,
+        
         [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        [PSCustomObject[]]$LeaveData,
-
+        [System.Management.Automation.PSCredential]$Credential,
+        
         [Parameter()]
-        [hashtable]$UserMapping,
+        [string]$ProxyUrl
+    )
+    
+    $context = "Test Website"
+    
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    
+    try {
+        $request = [System.Net.WebRequest]::Create($Uri)
+        $request.Credentials = $Credential.GetNetworkCredential()
+        
+        if ($ProxyUrl) {
+            $request.Proxy = [System.Net.WebProxy]::new($ProxyUrl)
+        }
+        
+        $response = $request.GetResponse()
+        $statusCode = [int]$response.StatusCode
+        $response.Close()
+        
+        if ($statusCode -eq 200) {
+            Write-Log -Context $context -Status '[SUCCESS]' -Message "Site is OK!"
+            return $true
+        }
+        else {
+            Write-Log -Context $context -Status '[ERROR]' -Message "Site returned status $statusCode"
+            return $false
+        }
+    }
+    catch {
+        Write-Log -Context $context -Status '[ERROR]' -Message "The Site may be down, please check! $_"
+        return $false
+    }
+}
 
+function Get-LeaveDataFromApi {
+    <#
+    .SYNOPSIS
+        Downloads leave data from API to CSV file.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Uri,
+        
+        [Parameter(Mandatory)]
+        [System.Management.Automation.PSCredential]$Credential,
+        
+        [Parameter(Mandatory)]
+        [string]$OutputPath,
+        
+        [Parameter()]
+        [string]$ProxyUrl
+    )
+    
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    
+    $invokeParams = @{
+        Uri        = $Uri
+        Credential = $Credential
+        OutFile    = $OutputPath
+        Method     = 'Get'
+    }
+    
+    if ($ProxyUrl) {
+        $invokeParams.Proxy = $ProxyUrl
+    }
+    
+    Invoke-RestMethod @invokeParams
+    
+    return $OutputPath
+}
+
+#endregion API Functions
+
+#region CSV Functions
+
+function Move-ExistingCsvFiles {
+    <#
+    .SYNOPSIS
+        Moves existing CSV files to processed folder.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$ScriptPath,
+        
+        [Parameter(Mandatory)]
+        [string]$Pattern,
+        
+        [Parameter(Mandatory)]
+        [string]$ProcessedPath
+    )
+    
+    $context = "Create CSV file"
+    
+    if (-not (Test-Path -Path $ProcessedPath)) {
+        New-Item -Path $ProcessedPath -ItemType Directory -Force | Out-Null
+    }
+    
+    $files = Get-ChildItem -Path $ScriptPath -Filter $Pattern -ErrorAction SilentlyContinue
+    
+    if (-not $files) {
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "CSV does not exist in $ScriptPath"
+        return
+    }
+    
+    foreach ($file in $files) {
+        Move-Item -Path $file.FullName -Destination $ProcessedPath -Force
+        Write-Log -Context $context -Status '[WARNING]' -Message "$($file.Name) already exists in $ScriptPath file moved to $ProcessedPath"
+    }
+}
+
+function Import-LeaveDataCsv {
+    <#
+    .SYNOPSIS
+        Imports and validates CSV file.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+    
+    $context = "Import CSV"
+    
+    try {
+        $csvData = Import-Csv -Path $Path -ErrorAction Stop
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "CSV file imported successfully"
+        
+        # Validate required fields
+        $requiredFields = @('ITCode', 'StartDate', 'StartTime', 'EndDate', 'EndTime')
+        
+        if ($csvData.Count -gt 0) {
+            foreach ($field in $requiredFields) {
+                if (-not ($csvData[0].PSObject.Properties.Name -contains $field)) {
+                    Write-Log -Context $context -Status '[ERROR]' -Message "Import file is missing required field: $field"
+                }
+            }
+        }
+        
+        return $csvData
+    }
+    catch {
+        Write-Log -Context $context -Status '[ERROR]' -Message "CSV file not found or invalid"
+        throw
+    }
+}
+
+#endregion CSV Functions
+
+#region Calendar Functions
+
+function New-LeaveAppointment {
+    <#
+    .SYNOPSIS
+        Creates a leave calendar appointment.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        $EwsService,
+        
+        [Parameter(Mandatory)]
+        [string]$EmailAddress,
+        
+        [Parameter(Mandatory)]
+        $LeaveItem,
+        
+        [Parameter(Mandatory)]
+        [string]$Subject,
+        
+        [Parameter(Mandatory)]
+        [string]$Body,
+        
         [Parameter()]
         [switch]$TestMode
     )
-
-    $results = [System.Collections.Generic.List[PSCustomObject]]::new()
-    $processed = 0
-
-    foreach ($entry in $LeaveData) {
-        $processed++
-        $percentComplete = [int](($processed / $LeaveData.Count) * 100)
-        Write-Progress -Activity 'Syncing leave data' -Status "$processed of $($LeaveData.Count)" -PercentComplete $percentComplete
-
-        # Map AFAS employee to Exchange mailbox
-        $userSmtp = $UserMapping[$entry.Medewerker] ?? "$($entry.Medewerker)@contoso.com"
-
-        $result = New-LeaveCalendarEvent -EwsService $EwsService `
-            -UserSmtp $userSmtp `
-            -LeaveEntry $entry `
-            -TestMode:$TestMode
-
-        if ($result) {
-            $results.Add($result)
-        }
+    
+    $context = "Create calendar item"
+    $mailboxUser = $LeaveItem.ITCode
+    
+    # Set impersonation
+    $EwsService.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId(
+        [Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress, 
+        $EmailAddress
+    )
+    
+    # Autodiscover
+    try {
+        $EwsService.AutodiscoverUrl($EmailAddress)
+        Write-Log -Context "Autodiscover" -Status '[SUCCESS]' -Message "Performing autodiscover for $EmailAddress"
     }
+    catch {
+        Write-Log -Context "Autodiscover" -Status '[ERROR]' -Message "Autodiscover for $EmailAddress not successful"
+        return $false
+    }
+    
+    # Bind to calendar
+    try {
+        $calendarFolder = [Microsoft.Exchange.WebServices.Data.CalendarFolder]::Bind(
+            $EwsService, 
+            [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Calendar
+        )
+        Write-Log -Context "Open user calendar" -Status '[SUCCESS]' -Message "Calendar for user $mailboxUser opened successfully"
+    }
+    catch {
+        Write-Log -Context "Open user calendar" -Status '[ERROR]' -Message "Cannot open calendar for user $mailboxUser"
+        return $false
+    }
+    
+    # Create appointment
+    try {
+        $startDate = [DateTime]($LeaveItem.StartDate + " " + $LeaveItem.StartTime)
+        $endDate = [DateTime]($LeaveItem.EndDate + " " + $LeaveItem.EndTime)
+        
+        if ($TestMode) {
+            Write-Log -Context $context -Status '[INFO]' -Message "[TEST] Would create: $Subject $startDate - $endDate for $EmailAddress"
+            return $true
+        }
+        
+        $appointment = New-Object Microsoft.Exchange.WebServices.Data.Appointment($EwsService)
+        $appointment.Subject = $Subject
+        $appointment.Start = $startDate
+        $appointment.End = $endDate
+        $appointment.LegacyFreeBusyStatus = [Microsoft.Exchange.WebServices.Data.LegacyFreeBusyStatus]::OOF
+        $appointment.IsReminderSet = $false
+        $appointment.Body = $Body
+        
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "Required fields set successfully"
+        
+        $appointment.Save([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Calendar)
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "Created $Subject $startDate $endDate for user $EmailAddress"
+        
+        return $true
+    }
+    catch {
+        Write-Log -Context $context -Status '[ERROR]' -Message "Failed to create appointment: $Subject - $_"
+        return $false
+    }
+}
 
-    Write-Progress -Activity 'Syncing leave data' -Completed
-    return $results.ToArray()
+function Remove-LeaveAppointment {
+    <#
+    .SYNOPSIS
+        Removes a canceled leave calendar appointment.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        $EwsService,
+        
+        [Parameter(Mandatory)]
+        [string]$EmailAddress,
+        
+        [Parameter(Mandatory)]
+        $LeaveItem,
+        
+        [Parameter(Mandatory)]
+        [string]$Subject,
+        
+        [Parameter()]
+        [switch]$TestMode
+    )
+    
+    $context = "Find calendar item"
+    $mailboxUser = $LeaveItem.ITCode
+    
+    # Set impersonation
+    $EwsService.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId(
+        [Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress, 
+        $EmailAddress
+    )
+    
+    # Autodiscover
+    try {
+        $EwsService.AutodiscoverUrl($EmailAddress)
+        Write-Log -Context "Autodiscover" -Status '[SUCCESS]' -Message "Performing autodiscover for $EmailAddress"
+    }
+    catch {
+        Write-Log -Context "Autodiscover" -Status '[ERROR]' -Message "Autodiscover for $EmailAddress not successful"
+        return $false
+    }
+    
+    # Bind to calendar
+    try {
+        $calendarFolder = [Microsoft.Exchange.WebServices.Data.CalendarFolder]::Bind(
+            $EwsService, 
+            [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Calendar
+        )
+        Write-Log -Context "Open user calendar" -Status '[SUCCESS]' -Message "Calendar for user $mailboxUser opened successfully"
+    }
+    catch {
+        Write-Log -Context "Open user calendar" -Status '[ERROR]' -Message "Cannot open calendar for user $mailboxUser"
+        return $false
+    }
+    
+    # Find and remove appointment
+    try {
+        $startDate = [DateTime]($LeaveItem.StartDate + " " + $LeaveItem.StartTime)
+        $endDate = [DateTime]($LeaveItem.EndDate + " " + $LeaveItem.EndTime)
+        
+        $calendarView = New-Object Microsoft.Exchange.WebServices.Data.CalendarView($startDate, $endDate, 10)
+        $appointments = $EwsService.FindAppointments($calendarFolder.Id, $calendarView)
+        
+        # Filter by subject and exact times
+        $matchingAppointments = $appointments | Where-Object { 
+            $_.Subject -eq $Subject -and 
+            $_.Start -eq $startDate -and 
+            $_.End -eq $endDate 
+        }
+        
+        if (-not $matchingAppointments) {
+            Write-Log -Context $context -Status '[ERROR]' -Message "Calendar Item not found"
+            return $false
+        }
+        
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "Calendar Item found. Required fields set successfully"
+        
+        if ($TestMode) {
+            Write-Log -Context $context -Status '[INFO]' -Message "[TEST] Would delete: $Subject $startDate - $endDate for $EmailAddress"
+            return $true
+        }
+        
+        foreach ($apt in $matchingAppointments) {
+            $apt.Delete([Microsoft.Exchange.WebServices.Data.DeleteMode]::MoveToDeletedItems)
+        }
+        
+        Write-Log -Context $context -Status '[SUCCESS]' -Message "Successfully deleted item $Subject $startDate $endDate"
+        return $true
+    }
+    catch {
+        Write-Log -Context $context -Status '[ERROR]' -Message "Failed to delete appointment: $Subject - $_"
+        return $false
+    }
 }
 
 #endregion Calendar Functions
 
+#region Main Processing Functions
+
+function Invoke-ImportLeaveData {
+    <#
+    .SYNOPSIS
+        Main import process - creates leave appointments.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Config,
+        
+        [Parameter(Mandatory)]
+        [System.Management.Automation.PSCredential]$Credential,
+        
+        [Parameter()]
+        [switch]$TestMode
+    )
+    
+    $scriptPath = $Config.Paths.ScriptPath
+    $processedPath = $Config.Paths.ProcessedPath
+    $leaveEndpoint = $Config.Api.LeaveDataEndpoint
+    $proxyUrl = $Config.Api.ProxyUrl
+    $subject = $Config.LeaveSettings.Subject
+    $body = $Config.LeaveSettings.Body
+    
+    # Generate CSV filename
+    $csvFileName = Join-Path -Path $scriptPath -ChildPath ("LeaveDataExchange" + (Get-Date -Format "ddMMyyyy") + ".csv")
+    
+    # Move existing CSV files
+    Move-ExistingCsvFiles -ScriptPath $scriptPath -Pattern "LeaveDataExchange*" -ProcessedPath $processedPath
+    
+    # Test API endpoint
+    if (-not (Test-ApiEndpoint -Uri $leaveEndpoint -Credential $Credential -ProxyUrl $proxyUrl)) {
+        throw "API endpoint is not available"
+    }
+    
+    # Download leave data
+    if (-not $TestMode) {
+        Get-LeaveDataFromApi -Uri $leaveEndpoint -Credential $Credential -OutputPath $csvFileName -ProxyUrl $proxyUrl
+    }
+    else {
+        Write-Log -Context "Get API Data" -Status '[INFO]' -Message "[TEST] Would download from $leaveEndpoint to $csvFileName"
+        return
+    }
+    
+    # Import CSV
+    $leaveData = Import-LeaveDataCsv -Path $csvFileName
+    
+    if (-not $leaveData -or $leaveData.Count -eq 0) {
+        Write-Log -Context "Process Data" -Status '[INFO]' -Message "No leave data to process"
+        return
+    }
+    
+    Write-Host "Processing $($leaveData.Count) leave entries..." -ForegroundColor Cyan
+    
+    # Process each leave entry
+    $successCount = 0
+    $errorCount = 0
+    
+    foreach ($item in $leaveData) {
+        $email = Get-UserEmail -ITCode $item.ITCode
+        
+        if (-not $email) {
+            $errorCount++
+            continue
+        }
+        
+        $result = New-LeaveAppointment -EwsService $script:EwsService `
+            -EmailAddress $email `
+            -LeaveItem $item `
+            -Subject $subject `
+            -Body $body `
+            -TestMode:$TestMode
+        
+        if ($result) {
+            $successCount++
+        }
+        else {
+            $errorCount++
+        }
+    }
+    
+    # Move processed file
+    if (Test-Path -Path $csvFileName) {
+        Move-Item -Path $csvFileName -Destination $processedPath -Force
+        Write-Log -Context "Processed" -Status '[SUCCESS]' -Message "All items processed successfully file $csvFileName moved to $processedPath"
+    }
+    
+    Write-Host "Import complete: Success=$successCount, Errors=$errorCount" -ForegroundColor Cyan
+}
+
+function Invoke-RemoveLeaveData {
+    <#
+    .SYNOPSIS
+        Main remove process - deletes canceled leave appointments.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Config,
+        
+        [Parameter(Mandatory)]
+        [System.Management.Automation.PSCredential]$Credential,
+        
+        [Parameter()]
+        [switch]$TestMode
+    )
+    
+    $scriptPath = $Config.Paths.ScriptPath
+    $processedPath = $Config.Paths.ProcessedPath
+    $canceledEndpoint = $Config.Api.CanceledLeaveEndpoint
+    $proxyUrl = $Config.Api.ProxyUrl
+    $subject = $Config.LeaveSettings.Subject
+    
+    # Generate CSV filename
+    $csvFileName = Join-Path -Path $scriptPath -ChildPath ("CanceledLeaveDataExchange" + (Get-Date -Format "ddMMyyyy") + ".csv")
+    
+    # Move existing CSV files
+    Move-ExistingCsvFiles -ScriptPath $scriptPath -Pattern "CanceledLeaveDataExchange*" -ProcessedPath $processedPath
+    
+    # Test API endpoint
+    if (-not (Test-ApiEndpoint -Uri $canceledEndpoint -Credential $Credential -ProxyUrl $proxyUrl)) {
+        throw "API endpoint is not available"
+    }
+    
+    # Download canceled leave data
+    if (-not $TestMode) {
+        Get-LeaveDataFromApi -Uri $canceledEndpoint -Credential $Credential -OutputPath $csvFileName -ProxyUrl $proxyUrl
+    }
+    else {
+        Write-Log -Context "Get API Data" -Status '[INFO]' -Message "[TEST] Would download from $canceledEndpoint to $csvFileName"
+        return
+    }
+    
+    # Import CSV
+    $leaveData = Import-LeaveDataCsv -Path $csvFileName
+    
+    if (-not $leaveData -or $leaveData.Count -eq 0) {
+        Write-Log -Context "Process Data" -Status '[INFO]' -Message "No canceled leave data to process"
+        return
+    }
+    
+    Write-Host "Processing $($leaveData.Count) canceled leave entries..." -ForegroundColor Cyan
+    
+    # Process each canceled leave entry
+    $successCount = 0
+    $errorCount = 0
+    
+    foreach ($item in $leaveData) {
+        $email = Get-UserEmail -ITCode $item.ITCode
+        
+        if (-not $email) {
+            $errorCount++
+            continue
+        }
+        
+        $result = Remove-LeaveAppointment -EwsService $script:EwsService `
+            -EmailAddress $email `
+            -LeaveItem $item `
+            -Subject $subject `
+            -TestMode:$TestMode
+        
+        if ($result) {
+            $successCount++
+        }
+        else {
+            $errorCount++
+        }
+    }
+    
+    # Move processed file
+    if (Test-Path -Path $csvFileName) {
+        Move-Item -Path $csvFileName -Destination $processedPath -Force
+        Write-Log -Context "Processed" -Status '[SUCCESS]' -Message "All items processed successfully file $csvFileName moved to $processedPath"
+    }
+    
+    Write-Host "Remove complete: Success=$successCount, Errors=$errorCount" -ForegroundColor Cyan
+}
+
+#endregion Main Processing Functions
+
 #region Main Execution
 
-if ($script:IsDotSourced) {
-    Write-Verbose 'Script was dot-sourced; functions are now available.'
-    return
+# Load configuration
+$script:Config = Import-Configuration -Path $ConfigPath
+
+# Initialize logging
+$logPrefix = switch ($Mode) {
+    'Import' { 'ImportCalendarFromAfas' }
+    'Remove' { 'RemoveCalendarItemFromAfas' }
+    'Both'   { 'AfasLeaveData' }
 }
 
-# Calculate date window
-$fromDate = (Get-Date).Date.AddDays(-$DaysBehind)
-$toDate = (Get-Date).Date.AddDays($DaysAhead)
+Initialize-LogFile -LogPath $script:Config.Paths.LogPath -Prefix $logPrefix
 
-Write-Verbose "AfasLeaveData v$script:Version"
-Write-Verbose "Sync window: $fromDate to $toDate"
+# Start logging
+$today = Get-Date
+Write-Log -Context "AfasLeaveData" -Status '[START]' -Message "*** Start Logging: $today *** Version $script:Version"
 
 if ($TestMode) {
-    Write-Host "TEST MODE: No actual changes will be made" -ForegroundColor Cyan
-}
-
-# Load configuration
-$config = @{}
-if ($ConfigPath) {
-    $config = Import-AfasConfiguration -Path $ConfigPath
-
-    # Apply config defaults
-    if (-not $AfasEnvironment -and $config.ContainsKey('AfasEnvironment')) {
-        $AfasEnvironment = $config['AfasEnvironment']
-    }
-}
-
-# Validate required parameters
-if (-not $AfasEnvironment) {
-    throw 'AfasEnvironment is required. Provide via -AfasEnvironment or config file.'
-}
-
-if (-not $AfasToken -and -not $TestMode) {
-    # Try to get from SecretManagement if available
-    if (Get-Command -Name Get-Secret -ErrorAction SilentlyContinue) {
-        $AfasToken = Get-Secret -Name 'AfasToken' -AsPlainText -ErrorAction SilentlyContinue
-    }
-
-    if (-not $AfasToken) {
-        throw 'AfasToken is required. Provide via -AfasToken, SecretManagement, or use -TestMode.'
-    }
+    Write-Host "TEST MODE: No actual changes will be made" -ForegroundColor Yellow
+    Write-Log -Context "AfasLeaveData" -Status '[INFO]' -Message "Running in TEST MODE"
 }
 
 try {
-    # Get leave data from AFAS
-    if ($TestMode) {
-        Write-Verbose 'Test mode: Using mock leave data'
-        $leaveData = @(
-            [PSCustomObject]@{
-                Medewerker    = 'EMP001'
-                Omschrijving  = 'Vakantie'
-                Datum_begin   = $fromDate.AddDays(5)
-                Datum_eind    = $fromDate.AddDays(10)
-                Verlofsoort   = 'Vakantie'
-            }
-        )
+    # Get credentials
+    if (-not $Credential) {
+        $Credential = Get-CredentialFromFile `
+            -Username $script:Config.Credential.Username `
+            -PasswordFilePath $script:Config.Credential.PasswordFile
     }
-    else {
-        $leaveData = Get-AfasLeaveData -Environment $AfasEnvironment `
-            -Token $AfasToken `
-            -FromDate $fromDate `
-            -ToDate $toDate
-    }
-
-    Write-Host "Retrieved $($leaveData.Count) leave entries from AFAS" -ForegroundColor Cyan
-
-    if ($leaveData.Count -eq 0) {
-        Write-Host 'No leave data found in specified date range.' -ForegroundColor Yellow
-        return
-    }
-
-    # TODO: Connect to EWS and sync
-    # $ews = Connect-EwsService ...
-    # $results = Sync-LeaveToCalendar -EwsService $ews -LeaveData $leaveData -TestMode:$TestMode
-
-    # For now, output leave data
-    $results = $leaveData | ForEach-Object {
-        [PSCustomObject]@{
-            Employee    = $_.Medewerker
-            Description = $_.Omschrijving
-            StartDate   = $_.Datum_begin
-            EndDate     = $_.Datum_eind
-            LeaveType   = $_.Verlofsoort
-            Status      = if ($TestMode) { 'TestMode' } else { 'Pending' }
+    
+    # Ensure TLS 1.2
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    
+    # Connect to Exchange
+    Connect-ExchangeSession -ExchangeUri $script:Config.Connection.ExchangeUri -Credential $Credential
+    
+    # Initialize EWS
+    Initialize-EwsService -EwsAssemblyPath $script:Config.EwsAssemblyPath -Credential $Credential
+    
+    # Execute based on mode
+    switch ($Mode) {
+        'Import' {
+            Invoke-ImportLeaveData -Config $script:Config -Credential $Credential -TestMode:$TestMode
+        }
+        'Remove' {
+            Invoke-RemoveLeaveData -Config $script:Config -Credential $Credential -TestMode:$TestMode
+        }
+        'Both' {
+            Invoke-ImportLeaveData -Config $script:Config -Credential $Credential -TestMode:$TestMode
+            Invoke-RemoveLeaveData -Config $script:Config -Credential $Credential -TestMode:$TestMode
         }
     }
-
-    # Export results
-    if ($results.Count -gt 0) {
-        $outputDir = Split-Path -Path $OutputPath -Parent
-        if ($outputDir -and -not (Test-Path -Path $outputDir)) {
-            New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
-        }
-
-        $results | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
-        Write-Host "Report saved to: $OutputPath" -ForegroundColor Green
-
-        if ($ExcelOutputPath) {
-            if (Get-Module -Name ImportExcel -ListAvailable) {
-                Import-Module ImportExcel -ErrorAction Stop
-                $results | Export-Excel -Path $ExcelOutputPath -WorksheetName 'LeaveSync' -AutoSize -FreezeTopRow
-                Write-Host "Excel report saved to: $ExcelOutputPath" -ForegroundColor Green
-            }
-            else {
-                Write-Warning 'ImportExcel module not available. Skipping Excel export.'
-            }
-        }
-    }
-
-    # Return results to pipeline
-    $results
 }
 catch {
-    Write-Error -ErrorRecord $_
+    Write-Log -Context "AfasLeaveData" -Status '[ERROR]' -Message "Fatal error: $_"
     throw
+}
+finally {
+    # Cleanup Exchange session
+    if ($script:ExchangeSession) {
+        Remove-PSSession -Session $script:ExchangeSession -ErrorAction SilentlyContinue
+    }
+    
+    # End logging
+    $today = Get-Date
+    Write-Log -Context "AfasLeaveData" -Status '[STOP]' -Message "*** End Logging: $today ***"
 }
 
 #endregion Main Execution

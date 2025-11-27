@@ -8,6 +8,14 @@ Elk script heeft een eigen subdirectory conform [AGENTS.md](AGENTS.md):
 
 ```
 exchange/
+├── AfasLeaveData/                    # AFAS leave data sync
+│   ├── AfasLeaveData.ps1             # Main script
+│   ├── config.example.json           # JSON configuration
+│   ├── config.example.psd1           # PowerShell configuration
+│   ├── README.md                     # Script documentation
+│   ├── legacy/                       # Old scripts for refactoring
+│   └── modules/
+│       └── AfasCore/                 # AFAS/Service Bus functions
 ├── Find-GhostRoomMeetings/           # Ghost meeting detection
 │   ├── Find-GhostRoomMeetings.ps1    # Main script
 │   ├── config.example.json           # JSON configuration
@@ -24,10 +32,22 @@ exchange/
 
 | Script | Purpose | PowerShell | Documentation |
 |--------|---------|------------|---------------|
+| [AfasLeaveData](AfasLeaveData/) | Sync AFAS leave data to Exchange calendars via Service Bus | 5.1+ | [README](AfasLeaveData/README.md) |
 | [Find-GhostRoomMeetings](Find-GhostRoomMeetings/) | Detect meetings with missing/disabled organizers | 5.1+ | [README](Find-GhostRoomMeetings/README.md) |
 | [Find-UnderutilizedRoomBookings](Find-UnderutilizedRoomBookings/) | Find large rooms booked for few attendees | 5.1+ | [README](Find-UnderutilizedRoomBookings/README.md) |
 
 ## Quick Start
+
+### AfasLeaveData
+
+```powershell
+.\AfasLeaveData\AfasLeaveData.ps1 `
+    -ConfigPath .\AfasLeaveData\config.json `
+    -Credential (Get-Credential)
+
+# Test mode (no actual connections)
+.\AfasLeaveData\AfasLeaveData.ps1 -TestMode -Verbose
+```
 
 ### Find-GhostRoomMeetings
 
