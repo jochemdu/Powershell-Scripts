@@ -1,37 +1,77 @@
-# Exchange-scripts
+# PowerShell Scripts Repository
 
-Repository met PowerShell-scripts voor Exchange, gestructureerd per domein.
+PowerShell-scripts voor Exchange en andere Microsoft-omgevingen, gestructureerd per domein.
 
-## Structuur
-- `exchange/` — Scripts voor Exchange Server en Exchange Online. Zie [`exchange/README.md`](exchange/README.md) voor vereisten en gebruik.
-- `modules/` — Gedeelde PowerShell-modules (nog niet gevuld).
-- `tests/` — Pester-tests, inclusief rooktests per domein (bijv. Exchange).
+## Directory Structure
 
-Zie [`AGENTS.md`](AGENTS.md) voor de volledige code- en structuurafspraken.
+```
+├── exchange/                    # Exchange Server/Online scripts
+│   ├── Find-GhostRoomMeetings/     # Ghost meeting detection
+│   └── Find-UnderutilizedRoomBookings/  # Room utilization analysis
+├── modules/                     # Shared PowerShell modules
+├── tests/                       # Pester tests per domain
+├── bash/                        # Shell utility scripts
+└── .github/workflows/           # CI/CD pipelines
+```
 
-## Beschikbare scripts
-- [`exchange/Find-GhostRoomMeetings.ps1`](exchange/Find-GhostRoomMeetings.ps1): auditeert zaalpostvakken op ghost meetings en maakt rapportages.
+## Available Scripts
 
-### Kernparameters
-- **ConnectionType**: Kies `OnPrem`, `EXO` of `Auto` (detectie op ExchangeUri) voor het juiste verbindingspad.
-- **ExchangeUri**: Remote PowerShell endpoint voor Exchange (alleen relevant voor on-prem of autodetectie).
-- **Credential**: Referenties met rechten op mail- en zaalpostvakken. Bij EXO wordt `Connect-ExchangeOnline` met moderne authenticatie gebruikt.
-- **EwsAssemblyPath**: Pad naar de EWS Managed API-assembly.
-- **MonthsAhead / MonthsBehind**: Datumbereik voor de controle.
-- **OutputPath**: CSV-rapportpad (standaard `ghost-meetings-report.csv` in de huidige map).
-- **ExcelOutputPath**: Optioneel Excel-rapport. Vereist het `ImportExcel`-module.
-- **OrganizationSmtpSuffix**: Domeinsuffix om interne organisatoren te herkennen.
-- **ImpersonationSmtp**: SMTP-adres voor EWS-impersonation en Autodiscover.
-- **SendInquiry / NotificationFrom / NotificationTemplate**: Instellingen om deelnemers per e-mail te benaderen.
-- **TestMode**: Laadt het script zonder externe verbindingen om rooktests/mocks te ondersteunen.
+| Domain | Script | Purpose | Docs |
+|--------|--------|---------|------|
+| Exchange | [Find-GhostRoomMeetings](exchange/Find-GhostRoomMeetings/) | Detect meetings with missing/disabled organizers | [README](exchange/Find-GhostRoomMeetings/README.md) |
+| Exchange | [Find-UnderutilizedRoomBookings](exchange/Find-UnderutilizedRoomBookings/) | Find large rooms booked for few attendees | [README](exchange/Find-UnderutilizedRoomBookings/README.md) |
 
-### Exporteren naar Excel
-Wanneer **ExcelOutputPath** is opgegeven, probeert het script het `ImportExcel`-module te laden en schrijft het een `.xlsx`-bestand naast de CSV. Installeer het module vooraf met `Install-Module ImportExcel` indien nodig.
+## Quick Start
+
+### Find Ghost Meetings
+
+```powershell
+cd exchange/Find-GhostRoomMeetings
+.\Find-GhostRoomMeetings.ps1 `
+    -ConfigPath .\config.json `
+    -Credential (Get-Credential)
+```
+
+### Find Underutilized Room Bookings
+
+```powershell
+cd exchange/Find-UnderutilizedRoomBookings
+.\Find-UnderutilizedRoomBookings.ps1 `
+    -MinimumCapacity 6 `
+    -MaxParticipants 2 `
+    -Credential (Get-Credential)
+```
+
+## Requirements
+
+- **PowerShell**: 5.1+ (7.0+ recommended)
+- **EWS Managed API**: For calendar access
+- **Exchange**: On-premises or Online with appropriate permissions
+
+See individual script READMEs for specific requirements.
 
 ## Tests
 
-De Pester-tests draaien op versie 5.x en zijn ondergebracht in de map [`tests/`](tests/). Gebruik bijvoorbeeld:
+Pester tests are in the [`tests/`](tests/) directory:
 
 ```powershell
-pwsh -NoProfile -Command "Invoke-Pester -Path tests"
+# Run all tests
+Invoke-Pester -Path tests
+
+# Run exchange tests only
+Invoke-Pester -Path tests/exchange
 ```
+
+## Documentation
+
+- [`AGENTS.md`](AGENTS.md) - Repository coding standards and structure guidelines
+- [`exchange/AGENTS.md`](exchange/AGENTS.md) - Exchange-specific guidelines
+- Individual script READMEs for detailed usage
+
+## Contributing
+
+See [`AGENTS.md`](AGENTS.md) for coding standards:
+- Use Verb-Noun naming convention
+- Include `[CmdletBinding()]` and proper help blocks
+- One functional change per commit
+- Update relevant documentation

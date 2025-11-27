@@ -40,7 +40,7 @@ Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestand
 - Elk powershellprogramma heeft zijn eigen subdirectory. Een powershell programma kan uit meerdere script bestaand
 - Alle benodigde modules sla je ook op in dezelfde subdirectory in directory modules.
 - Configureerbare parameters sla je ook op in de subdirectory in een asart bestand.
-- Elke powershell programma heeft zijn eigen README
+- Elke powershell programma heeft zijn eigen documentatie: README.md, QUICK_REFERENCE.md, USAGE_EXAMPLES.md, changelog.md
 - 
 ## Logging, rapportage en tests
 - Log output en rapporten per mailbox naar opgegeven CSV- en/of Excel-paden; gebruik ImportExcel voor `.xlsx`-exports.
@@ -51,11 +51,9 @@ Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestand
 - Wanneer `-ImpersonationSmtp` wordt gebruikt, beschrijf vereiste rechten (bijv. `ApplicationImpersonation`) en valideer het e-mailadres met `[ValidatePattern]`.
 
 ## Documentatie
-- Documenteer in `README.md` de vereiste modules, PowerShell-versie, config- en rapportpaden en de benodigde rechten voor impersonation of autodiscover.
+- Documenteer in `README.md` de vereiste modules, PowerShell-versie, config- en rapportpaden en de benodigde rechten voor impersonation of autodiscover. Ook vermeld je een 
 - In configuratiebestanden beschrijf je ook waar de parameter voor dient. Bij JSON doe je dit door middel van // commentaar
-- Documentatie sla je op per programma.
-  - QUICK_REFERENCE.md sla je op per programma
-  - USAGE_EXAMPLES.md sla je op per programma
+- Documentatie sla je op per powershell programma.
 - Auteur houd je bij bovenaan in het script
 
 ## Refactor

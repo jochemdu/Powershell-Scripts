@@ -1,219 +1,147 @@
-# Quick Reference Guide
+# Exchange Scripts - Quick Reference
 
-## Version Selection
+## Available Scripts
 
-| Need | Version | Command |
-|------|---------|---------|
-| Legacy PowerShell | v1 | `.\Find-GhostRoomMeetings.ps1` |
-| PowerShell 7+ | v7 | `.\Find-GhostRoomMeetings-v7.ps1` |
-| Maximum Performance | v7 | `.\Find-GhostRoomMeetings-v7.ps1` |
-| Maximum Compatibility | v1 | `.\Find-GhostRoomMeetings.ps1` |
-
-## Basic Usage
-
-### v1 (Universal)
-```powershell
-$cred = Get-Credential
-.\Find-GhostRoomMeetings.ps1 `
-    -ConfigPath config.example.psd1 `
-    -Credential $cred
-```
-
-### v7 (Modern)
-```powershell
-$cred = Get-Credential
-.\Find-GhostRoomMeetings-v7.ps1 `
-    -ConfigPath config.example.json `
-    -Credential $cred
-```
+| Script | Purpose | Location |
+|--------|---------|----------|
+| Find-GhostRoomMeetings | Detect ghost meetings | `Find-GhostRoomMeetings/` |
+| Find-UnderutilizedRoomBookings | Find underutilized rooms | `Find-UnderutilizedRoomBookings/` |
 
 ## Common Tasks
 
-### Scan Last 3 Months
+### Scan for Ghost Meetings
 ```powershell
-# v1
-.\Find-GhostRoomMeetings.ps1 -ConfigPath config.psd1 -Credential $cred -MonthsBehind 3
+cd Find-GhostRoomMeetings
+.\Find-GhostRoomMeetings.ps1 -ConfigPath config.json -Credential (Get-Credential)
+```
 
-# v7
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred -MonthsBehind 3
+### Find Underutilized Room Bookings
+```powershell
+cd Find-UnderutilizedRoomBookings
+.\Find-UnderutilizedRoomBookings.ps1 -MinimumCapacity 6 -MaxParticipants 2 -Credential (Get-Credential)
+```
+
+### Test Mode (No Connections)
+```powershell
+.\Find-GhostRoomMeetings.ps1 -TestMode -Verbose
+.\Find-UnderutilizedRoomBookings.ps1 -TestMode -Verbose
 ```
 
 ### Export to Excel
 ```powershell
-# v1
-.\Find-GhostRoomMeetings.ps1 -ConfigPath config.psd1 -Credential $cred -ExcelOutputPath report.xlsx
-
-# v7
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred -ExcelOutputPath report.xlsx
+.\Find-GhostRoomMeetings.ps1 -ConfigPath config.json -Credential $cred -ExcelOutputPath report.xlsx
 ```
 
-### Send Notifications
+### Send Notifications (Ghost Meetings)
 ```powershell
-# v1
-.\Find-GhostRoomMeetings.ps1 -ConfigPath config.psd1 -Credential $cred `
+.\Find-GhostRoomMeetings.ps1 -ConfigPath config.json -Credential $cred `
     -SendInquiry -NotificationFrom noreply@contoso.com
-
-# v7
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred `
-    -SendInquiry -NotificationFrom noreply@contoso.com
-```
-
-### Test Mode
-```powershell
-# v1
-.\Find-GhostRoomMeetings.ps1 -ConfigPath config.psd1 -TestMode -Verbose
-
-# v7
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -TestMode -Verbose
-```
-
-## Performance Tuning (v7 Only)
-
-### Auto-Detect CPU Cores (Default)
-```powershell
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred
-```
-
-### Conservative (2 Threads)
-```powershell
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred -ThrottleLimit 2
-```
-
-### Aggressive (All Cores)
-```powershell
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred -ThrottleLimit ([Environment]::ProcessorCount)
-```
-
-### Sequential (Debugging)
-```powershell
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred -ThrottleLimit 1
 ```
 
 ## Configuration Files
 
-### v1 Format (.psd1)
+### JSON Format (Recommended)
+```json
+{
+  "Connection": {
+    "Type": "OnPrem",
+    "ExchangeUri": "http://exchange.contoso.com/PowerShell/"
+  },
+  "Impersonation": {
+    "SmtpAddress": "service@contoso.com"
+  },
+  "OrganizationSmtpSuffix": "contoso.com",
+  "MonthsAhead": 12,
+  "MonthsBehind": 0
+}
+```
+
+### PowerShell Data File Format
 ```powershell
 @{
-    ExchangeUri = 'http://exchange.contoso.com/PowerShell/'
-    ConnectionType = 'OnPrem'
-    MonthsAhead = 12
+    Connection = @{
+        Type = 'OnPrem'
+        ExchangeUri = 'http://exchange.contoso.com/PowerShell/'
+    }
+    Impersonation = @{
+        SmtpAddress = 'service@contoso.com'
+    }
     OrganizationSmtpSuffix = 'contoso.com'
 }
 ```
 
-### v7 Format (.json)
-```json
-{
-  "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
-  "ConnectionType": "OnPrem",
-  "MonthsAhead": 12,
-  "OrganizationSmtpSuffix": "contoso.com"
-}
-```
+## Key Parameters
+
+### Common Parameters
+
+| Parameter | Purpose | Example |
+|-----------|---------|---------|
+| ConfigPath | Configuration file | `-ConfigPath config.json` |
+| Credential | Exchange credentials | `-Credential (Get-Credential)` |
+| MonthsAhead | Future months to scan | `-MonthsAhead 12` |
+| MonthsBehind | Past months to scan | `-MonthsBehind 1` |
+| OutputPath | CSV output file | `-OutputPath report.csv` |
+| TestMode | Test without connecting | `-TestMode` |
+| Verbose | Detailed output | `-Verbose` |
+
+### Ghost Meetings Specific
+
+| Parameter | Purpose | Example |
+|-----------|---------|---------|
+| SendInquiry | Send notifications | `-SendInquiry` |
+| NotificationFrom | Sender email | `-NotificationFrom noreply@contoso.com` |
+| ExcelOutputPath | Excel output file | `-ExcelOutputPath report.xlsx` |
+
+### Underutilized Rooms Specific
+
+| Parameter | Purpose | Example |
+|-----------|---------|---------|
+| MinimumCapacity | Min room size | `-MinimumCapacity 6` |
+| MaxParticipants | Max attendee threshold | `-MaxParticipants 2` |
 
 ## Troubleshooting
 
 ### Issue: "EWS assembly not found"
-```powershell
-# Update EwsAssemblyPath in config file
-# Or install EWS Managed API from Microsoft
-```
+- Download EWS Managed API from Microsoft
+- Update EwsAssemblyPath in config
 
 ### Issue: "Cannot connect to Exchange"
 ```powershell
 # Verify credentials
 $cred = Get-Credential
-# Test connection
 Test-Connection exchange.contoso.com
 ```
 
-### Issue: Parallel processing errors (v7)
-```powershell
-# Disable parallelization
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred -ThrottleLimit 1
-```
+### Issue: "Access denied to calendar"
+- Verify ApplicationImpersonation role
+- Check ImpersonationSmtp address
 
-### Issue: High memory usage (v7)
-```powershell
-# Reduce parallel threads
-.\Find-GhostRoomMeetings-v7.ps1 -ConfigPath config.json -Credential $cred -ThrottleLimit 2
-```
-
-## Performance Comparison
-
-| Deployment | v1 | v7 | Speedup |
-|------------|----|----|---------|
-| 10 rooms | 45s | 15s | 3x |
-| 50 rooms | 225s | 35s | 6.4x |
-| 100 rooms | 450s | 65s | 6.9x |
-
-## Key Parameters
-
-| Parameter | Purpose | Example |
-|-----------|---------|---------|
-| ConfigPath | Configuration file | `-ConfigPath config.json` |
-| Credential | Exchange credentials | `-Credential $cred` |
-| MonthsAhead | Future months to scan | `-MonthsAhead 12` |
-| MonthsBehind | Past months to scan | `-MonthsBehind 3` |
-| OutputPath | CSV output file | `-OutputPath report.csv` |
-| ExcelOutputPath | Excel output file | `-ExcelOutputPath report.xlsx` |
-| SendInquiry | Send notifications | `-SendInquiry` |
-| NotificationFrom | Sender email | `-NotificationFrom noreply@contoso.com` |
-| ThrottleLimit | Parallel threads (v7) | `-ThrottleLimit 8` |
-| TestMode | Test without connecting | `-TestMode` |
-| Verbose | Detailed output | `-Verbose` |
-
-## Documentation
-
-- **PS7_FEATURES.md** - PS7 features explained
-- **VERSION_COMPARISON.md** - v1 vs v7 comparison
-- **USAGE_EXAMPLES.md** - v1 examples
-- **USAGE_EXAMPLES_V7.md** - v7 examples
-- **PS7_MIGRATION_GUIDE.md** - Migration instructions
-- **README.md** - Overview and quick start
+### Issue: "No room mailboxes found"
+- Verify Exchange connection
+- Check room mailbox RecipientTypeDetails
 
 ## Requirements
 
-### v1
-- PowerShell 1.0+
+- PowerShell 5.1+ (7.0+ recommended)
 - EWS Managed API
-- Exchange Server 2013+
-
-### v7
-- PowerShell 7.0+
-- EWS Managed API
-- Exchange Server 2013+
-
-## Installation
-
-```powershell
-# Copy scripts
-Copy-Item Find-GhostRoomMeetings*.ps1 C:\Scripts\
-
-# Copy config
-Copy-Item config.example.* C:\Scripts\
-
-# Install optional modules
-Install-Module ImportExcel -Scope CurrentUser
-```
+- Exchange Server 2013+ or Exchange Online
+- ApplicationImpersonation rights
 
 ## First Run Checklist
 
-- [ ] Verify PowerShell version
+- [ ] Verify PowerShell version: `$PSVersionTable.PSVersion`
 - [ ] Install EWS Managed API
-- [ ] Create configuration file
+- [ ] Copy config.example.json to config.json
+- [ ] Update config with your environment settings
 - [ ] Get service account credentials
-- [ ] Run test mode: `-TestMode`
+- [ ] Run in test mode: `-TestMode -Verbose`
 - [ ] Review output
-- [ ] Run production
-- [ ] Monitor performance
-- [ ] Adjust throttle limit (v7)
+- [ ] Run production scan
 
-## Support
+## Documentation
 
-For detailed information, see:
-1. README.md - Overview
-2. PS7_FEATURES.md - Feature details
-3. USAGE_EXAMPLES_V7.md - Practical examples
-4. PS7_MIGRATION_GUIDE.md - Migration help
+- [Find-GhostRoomMeetings README](Find-GhostRoomMeetings/README.md)
+- [Find-UnderutilizedRoomBookings README](Find-UnderutilizedRoomBookings/README.md)
+- [USAGE_EXAMPLES.md](USAGE_EXAMPLES.md)
+- [AGENTS.md](AGENTS.md) - Coding standards
 
