@@ -35,7 +35,11 @@ Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestand
 - Ondersteun zowel autodiscover als expliciete `-EwsUrl`; documenteer wanneer handmatige URL vereist is (bijv. on-prem zonder autodiscover).
 - Geef aan hoe verbindingen verschillen voor on-prem (gebruik bestaande EMS of Exchange Management Shell) versus Exchange Online (moderne authenticatie, `Connect-ExchangeOnline`).
 - Maak duidelijk hoe de EWS Managed API wordt geladen (bijv. vanuit assemblies of vooraf geïnstalleerde module).
-
+## Opslag
+- Elk powershellprogramma heeft zijn eigen subdirectory. Een powershell programma kan uit meerdere script bestaand
+- Alle benodigde modules sla je ook op in dezelfde subdirectory in directory modules.
+- Configureerbare parameters sla je ook op in de subdirectory in een asart bestand.
+- 
 ## Logging, rapportage en tests
 - Log output en rapporten per mailbox naar opgegeven CSV- en/of Excel-paden; gebruik ImportExcel voor `.xlsx`-exports.
 - Rooktest: voer scripts uit met `-WhatIf` (of een expliciete testmodus) met een veilige dummy-configuratie.
