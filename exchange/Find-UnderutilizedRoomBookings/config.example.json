@@ -1,0 +1,17 @@
+{
+  "Connection": {
+    "Type": "OnPrem",
+    "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
+    "EwsUrl": null,
+    "Autodiscover": true
+  },
+  "Impersonation": {
+    "SmtpAddress": "service.account@contoso.com"
+  },
+  "EwsAssemblyPath": "C:\\Program Files\\Microsoft\\Exchange\\Web Services\\2.2\\Microsoft.Exchange.WebServices.dll",
+  "MonthsAhead": 1,
+  "MonthsBehind": 0,
+  "MinimumCapacity": 6,
+  "MaxParticipants": 2,
+  "OutputPath": "./reports/underutilized-room-bookings.csv"
+}

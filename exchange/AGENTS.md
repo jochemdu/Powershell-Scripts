@@ -56,6 +56,13 @@ Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestand
 - Documentatie sla je op per programma.
   - QUICK_REFERENCE.md sla je op per programma
   - USAGE_EXAMPLES.md sla je op per programma
+- Auteur houd je bij bovenaan in het script
+
+## Refactor
+- Legacy programma script wordt in subfolder legacy geplaatst
+
+## Versie controle
+- Bovenaan in een script zet je de versie nummer
 
 ## Meeting-room scripts (zoekbereik)
 - Stel het standaardzoekbereik altijd in vanaf de huidige datum (bijv. `MonthsBehind = 0`) zodat rapportages niet onbedoeld ver het verleden ingaan.

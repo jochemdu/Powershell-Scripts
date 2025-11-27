@@ -24,55 +24,38 @@ exchange/
 
 | Script | Purpose | PowerShell | Documentation |
 |--------|---------|------------|---------------|
-| [Find-GhostRoomMeetings](Find-GhostRoomMeetings/) | Detect meetings with missing/disabled organizers | 5.1+ (7+ recommended) | [README](Find-GhostRoomMeetings/README.md) |
-| [Find-UnderutilizedRoomBookings](Find-UnderutilizedRoomBookings.ps1) | Find large rooms booked for few attendees | 5.1+ | See below |
+| [Find-GhostRoomMeetings](Find-GhostRoomMeetings/) | Detect meetings with missing/disabled organizers | 5.1+ | [README](Find-GhostRoomMeetings/README.md) |
+| [Find-UnderutilizedRoomBookings](Find-UnderutilizedRoomBookings/) | Find large rooms booked for few attendees | 5.1+ | [README](Find-UnderutilizedRoomBookings/README.md) |
 
 ## Quick Start
 
 ### Find-GhostRoomMeetings
 
 ```powershell
-# Using config file
 .\Find-GhostRoomMeetings\Find-GhostRoomMeetings.ps1 `
     -ConfigPath .\Find-GhostRoomMeetings\config.json `
     -Credential (Get-Credential)
-
-# Direct parameters
-.\Find-GhostRoomMeetings\Find-GhostRoomMeetings.ps1 `
-    -ConnectionType OnPrem `
-    -ExchangeUri 'http://exchange.contoso.com/PowerShell/' `
-    -ImpersonationSmtp 'service@contoso.com' `
-    -Credential (Get-Credential) `
-    -MonthsAhead 6
 ```
+
+### Find-UnderutilizedRoomBookings
+
+```powershell
+.\Find-UnderutilizedRoomBookings\Find-UnderutilizedRoomBookings.ps1 `
+    -ConfigPath .\Find-UnderutilizedRoomBookings\config.json `
+    -Credential (Get-Credential)
+```
+
+## Shared Module
+
+Both scripts use the `ExchangeCore` module located in each script's `modules/` directory:
+
+- `Import-ConfigurationFile` - Load JSON/PSD1 configs
+- `Connect-ExchangeSession` / `Disconnect-ExchangeSession` - Exchange connections
+- `Connect-EwsService` - EWS service setup
+- `Get-RoomCalendarItems` - Retrieve calendar meetings
+- `Get-ResolvedConnectionType` - Auto-detect OnPrem/EXO
 
 ## Additional Documentation
 
 - **[USAGE_EXAMPLES.md](USAGE_EXAMPLES.md)** - Common usage examples
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Parameter quick reference
-
-## Find-UnderutilizedRoomBookings.ps1
-Spoort vergaderingen op waar grote vergaderruimtes (bijv. 6+ plaatsen) geboekt zijn voor slechts één of enkele deelnemers.
-
-### Vereisten
-- PowerShell 1+.
-- On-prem: toegang tot de Exchange Management Shell of een remote PowerShell sessie (`-ExchangeUri`).
-- Exchange Online: `ExchangeOnlineManagement`-module en moderne authenticatie via `Connect-ExchangeOnline`.
-- EWS Managed API assembly beschikbaar op het opgegeven pad (`-EwsAssemblyPath`).
-- Impersonationrechten voor de opgegeven serviceaccount (bijv. `ApplicationImpersonation` in EXO).
-
-### Voorbeeldgebruik
-```powershell
-pwsh -NoProfile -File ./exchange/Find-UnderutilizedRoomBookings.ps1 \
-    -ConnectionType Auto \
-    -ExchangeUri 'http://exchange.contoso.com/PowerShell/' \
-    -ImpersonationSmtp 'service@contoso.com' \
-    -MinimumCapacity 6 \
-    -MaxParticipants 2 \
-    -OutputPath './reports/underutilized.csv'
-```
-
-### Parameters
-- **MinimumCapacity**: Alleen ruimtes scannen met deze minimumcapaciteit of hoger (standaard 6).
-- **MaxParticipants**: Signaleer vergaderingen met maximaal dit aantal deelnemers (standaard 2, telt organisator + aanwezigen).
-- **MonthsAhead/MonthsBehind**: Datumvenster voor de kalenderquery.
