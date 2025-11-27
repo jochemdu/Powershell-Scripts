@@ -415,15 +415,6 @@ if ($SendInquiry -and -not $NotificationFrom) {
     throw '-NotificationFrom is required when -SendInquiry is specified.'
 }
 
-if (-not $ImpersonationSmtp) {
-    if ($Credential.UserName -match '@') {
-        $ImpersonationSmtp = $Credential.UserName
-    }
-    else {
-        throw 'Provide -ImpersonationSmtp (SMTP address) for EWS Autodiscover and impersonation.'
-    }
-}
-
 # Ensure output directories exist
 $outputDir = Split-Path -Path $OutputPath -Parent
 if ($outputDir -and -not (Test-Path -Path $outputDir)) {
@@ -445,6 +436,25 @@ try {
         -Credential $Credential `
         -Type $script:ExchangeConnectionType `
         -TestMode:$TestMode
+
+    # Resolve ImpersonationSmtp via Get-Mailbox if not provided
+    if (-not $ImpersonationSmtp) {
+        if ($Credential.UserName -match '@') {
+            $ImpersonationSmtp = $Credential.UserName
+        }
+        else {
+            # Extract username from DOMAIN\username format
+            $username = $Credential.UserName -replace '^.*\\', ''
+            try {
+                $mailbox = Get-Mailbox -Identity $username -ErrorAction Stop
+                $ImpersonationSmtp = $mailbox.PrimarySmtpAddress.ToString()
+                Write-Verbose "Resolved ImpersonationSmtp via Get-Mailbox: $ImpersonationSmtp"
+            }
+            catch {
+                throw "Could not resolve SMTP address for '$username' via Get-Mailbox. Provide -ImpersonationSmtp explicitly."
+            }
+        }
+    }
 
     # Connect to EWS
     $ewsParams = @{
