@@ -53,6 +53,9 @@ Deze richtlijnen gelden voor `exchange/` en alle onderliggende mappen en bestand
 ## Documentatie
 - Documenteer in `README.md` de vereiste modules, PowerShell-versie, config- en rapportpaden en de benodigde rechten voor impersonation of autodiscover.
 - In configuratiebestanden beschrijf je ook waar de parameter voor dient. Bij JSON doe je dit door middel van // commentaar
+- Documentatie sla je op per programma.
+  - QUICK_REFERENCE.md sla je op per programma
+  - USAGE_EXAMPLES.md sla je op per programma
 
 ## Meeting-room scripts (zoekbereik)
 - Stel het standaardzoekbereik altijd in vanaf de huidige datum (bijv. `MonthsBehind = 0`) zodat rapportages niet onbedoeld ver het verleden ingaan.
