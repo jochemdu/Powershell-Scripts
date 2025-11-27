@@ -7,9 +7,9 @@ Deze richtlijnen gelden voor de volledige repository. Voeg een extra `AGENTS.md`
 - Groepeer scripts per domein in submappen (bijv. `exchange/`, `azure-ad/`, `m365/`, `onprem/`).
 - Deelbare functionaliteit hoort in PowerShell-modules onder `modules/<ModuleNaam>/<ModuleNaam>.psm1` met een expliciete exportlijst.
 - Voeg per domeinmap een korte `README.md` toe met doel, vereisten en voorbeeldgebruik. Bewaar uitgebreidere handleidingen in `docs/` en eventuele voorbeelden in `examples/`.
-- Bewaar tests of linting in `tests/` (bijv. Pester).
 
 ## PowerShell-stijl
+- weer compatible met alle powershell versies, ook legacy code.
 - Gebruik Verb-Noun namen (Get-/Set-/Test-) en PascalCase voor parameters.
 - Begin scripts met `[CmdletBinding()]`, `Set-StrictMode -Version Latest` en `$ErrorActionPreference = 'Stop'`.
 - Valideer invoer met `[Validate*]` attributen; gebruik `switch` voor booleans en schrijf duidelijke help-blokken (`.SYNOPSIS`, `.EXAMPLE`).
@@ -20,7 +20,6 @@ Deze richtlijnen gelden voor de volledige repository. Voeg een extra `AGENTS.md`
 - Beschrijf minimaal doel, vereisten (modules, scopes, rechten), parameters en voorbeeldcommando’s.
 
 ## Tests en kwaliteitschecks
-- Voeg waar mogelijk Pester-tests toe en run `Invoke-Pester` voor je commit of PR.
 - Voer een rooktest uit met `pwsh -NoProfile -File <script>.ps1 -WhatIf` of een testmodus.
 
 ## Commits en PR’s
