@@ -117,7 +117,6 @@ param(
     [string]$OutputPath = (Join-Path -Path $PWD -ChildPath 'underutilized-room-bookings.csv'),
 
     [Parameter()]
-    [ValidateNotNullOrEmpty()]
     [string]$EwsUrl,
 
     [Parameter()]
@@ -156,7 +155,7 @@ if ($ConfigPath) {
         if (-not $PSBoundParameters.ContainsKey('ConnectionType') -and $conn.ContainsKey('Type')) {
             $ConnectionType = $conn['Type']
         }
-        if (-not $PSBoundParameters.ContainsKey('EwsUrl') -and $conn.ContainsKey('EwsUrl')) {
+        if (-not $PSBoundParameters.ContainsKey('EwsUrl') -and $conn.ContainsKey('EwsUrl') -and $conn['EwsUrl']) {
             $EwsUrl = $conn['EwsUrl']
         }
         if (-not $PSBoundParameters.ContainsKey('ExchangeUri') -and $conn.ContainsKey('ExchangeUri')) {
@@ -187,7 +186,7 @@ if ($ConfigPath) {
     }
 
     foreach ($key in $configMappings.Keys) {
-        if (-not $PSBoundParameters.ContainsKey($key) -and $config.ContainsKey($key)) {
+        if (-not $PSBoundParameters.ContainsKey($key) -and $config.ContainsKey($key) -and $null -ne $config[$key]) {
             Set-Variable -Name $key -Value $config[$key] -Scope Local
         }
     }
