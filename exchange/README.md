@@ -2,84 +2,54 @@
 
 Scripts voor Exchange Server en Exchange Online beheer.
 
+## Directory Structure
+
+Elk script heeft een eigen subdirectory conform [AGENTS.md](AGENTS.md):
+
+```
+exchange/
+├── Find-GhostRoomMeetings/           # Ghost meeting detection
+│   ├── Find-GhostRoomMeetings.ps1    # Main script
+│   ├── config.example.json           # JSON configuration
+│   ├── config.example.psd1           # PowerShell configuration
+│   ├── README.md                     # Script documentation
+│   └── modules/
+│       └── ExchangeCore/             # Shared functions
+├── Find-UnderutilizedRoomBookings/   # Underutilized room detection
+├── AGENTS.md                         # Coding standards
+└── README.md                         # This file
+```
+
 ## Available Scripts
 
-### Find-GhostRoomMeetings.ps1 (v1 - Universal)
-**Compatibility**: PowerShell 1.0 - 7.x
-**Best For**: Legacy environments, maximum compatibility
-
-### Find-GhostRoomMeetings-v7.ps1 (v7 - Modern)
-**Compatibility**: PowerShell 7.0+
-**Best For**: Modern environments, large deployments (5-8x faster)
+| Script | Purpose | PowerShell | Documentation |
+|--------|---------|------------|---------------|
+| [Find-GhostRoomMeetings](Find-GhostRoomMeetings/) | Detect meetings with missing/disabled organizers | 5.1+ (7+ recommended) | [README](Find-GhostRoomMeetings/README.md) |
+| [Find-UnderutilizedRoomBookings](Find-UnderutilizedRoomBookings.ps1) | Find large rooms booked for few attendees | 5.1+ | See below |
 
 ## Quick Start
 
-### v1 (Universal - All PowerShell Versions)
+### Find-GhostRoomMeetings
+
 ```powershell
-$cred = Get-Credential
-.\Find-GhostRoomMeetings.ps1 `
-    -ConfigPath config.example.psd1 `
-    -Credential $cred
-```
+# Using config file
+.\Find-GhostRoomMeetings\Find-GhostRoomMeetings.ps1 `
+    -ConfigPath .\Find-GhostRoomMeetings\config.json `
+    -Credential (Get-Credential)
 
-### v7 (Modern - PowerShell 7+ Only)
-```powershell
-$cred = Get-Credential
-.\Find-GhostRoomMeetings-v7.ps1 `
-    -ConfigPath config.example.json `
-    -Credential $cred
-```
-
-## Documentation
-
-- **[PS7_FEATURES.md](PS7_FEATURES.md)** - Detailed PS7 features and optimizations
-- **[VERSION_COMPARISON.md](VERSION_COMPARISON.md)** - Comparison between v1 and v7
-- **[USAGE_EXAMPLES.md](USAGE_EXAMPLES.md)** - v1 usage examples
-- **[USAGE_EXAMPLES_V7.md](USAGE_EXAMPLES_V7.md)** - v7 usage examples
-- **[REFACTORING_SUMMARY.md](../REFACTORING_SUMMARY.md)** - v1 refactoring details
-
-## Find-GhostRoomMeetings.ps1 (v1)
-Auditeert vergaderingen in zaalpostvakken om zogeheten "ghost meetings" te detecteren waarbij de organisator ontbreekt of gedeactiveerd is.
-
-### Vereisten
-- PowerShell 1.0 of later
-- On-prem: Exchange Management Shell of remote PowerShell sessie
-- Exchange Online: `ExchangeOnlineManagement`-module
-- EWS Managed API assembly
-- Serviceaccount met EWS-impersonation rechten
-- Optioneel: `ImportExcel`-module voor Excel export
-
-### Voorbeeldgebruik
-```powershell
-$cred = Get-Credential
-.\Find-GhostRoomMeetings.ps1 `
-    -ConfigPath config.example.psd1 `
-    -Credential $cred `
+# Direct parameters
+.\Find-GhostRoomMeetings\Find-GhostRoomMeetings.ps1 `
+    -ConnectionType OnPrem `
+    -ExchangeUri 'http://exchange.contoso.com/PowerShell/' `
+    -ImpersonationSmtp 'service@contoso.com' `
+    -Credential (Get-Credential) `
     -MonthsAhead 6
 ```
 
-## Find-GhostRoomMeetings-v7.ps1 (v7)
-PowerShell 7+ optimized version met parallel processing (5-8x sneller).
+## Additional Documentation
 
-### Vereisten
-- PowerShell 7.0 of later
-- EWS Managed API assembly
-- Serviceaccount met EWS-impersonation rechten
-- Optioneel: `ImportExcel`-module voor Excel export
-
-### Voorbeeldgebruik
-```powershell
-$cred = Get-Credential
-.\Find-GhostRoomMeetings-v7.ps1 `
-    -ConfigPath config.example.json `
-    -Credential $cred `
-    -ThrottleLimit 8
-```
-
-### Performance
-- v1: 100 rooms in ~450 seconds
-- v7: 100 rooms in ~65 seconds (6.9x faster)
-
+- **[USAGE_EXAMPLES.md](USAGE_EXAMPLES.md)** - Common usage examples
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Parameter quick reference
 
 ## Find-UnderutilizedRoomBookings.ps1
 Spoort vergaderingen op waar grote vergaderruimtes (bijv. 6+ plaatsen) geboekt zijn voor slechts één of enkele deelnemers.

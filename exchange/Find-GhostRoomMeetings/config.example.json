@@ -1,15 +1,21 @@
 {
-  "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
-  "ConnectionType": "Auto",
+  "Connection": {
+    "Type": "OnPrem",
+    "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
+    "EwsUrl": null,
+    "Autodiscover": true
+  },
+  "Impersonation": {
+    "SmtpAddress": "service.account@contoso.com"
+  },
   "EwsAssemblyPath": "C:\\Program Files\\Microsoft\\Exchange\\Web Services\\2.2\\Microsoft.Exchange.WebServices.dll",
+  "OrganizationSmtpSuffix": "contoso.com",
   "MonthsAhead": 12,
   "MonthsBehind": 0,
   "OutputPath": "./reports/ghost-meetings-report.csv",
   "ExcelOutputPath": "./reports/ghost-meetings-report.xlsx",
-  "OrganizationSmtpSuffix": "contoso.com",
-  "ImpersonationSmtp": "serviceaccount@contoso.com",
   "SendInquiry": false,
-  "NotificationFrom": "roomadmin@contoso.com",
+  "NotificationFrom": "noreply@contoso.com",
   "NotificationTemplate": "Please confirm if this meeting is still required for {0}.",
-  "EwsUrl": "https://mail.contoso.com/EWS/Exchange.asmx"
+  "ThrottleLimit": 4
 }
