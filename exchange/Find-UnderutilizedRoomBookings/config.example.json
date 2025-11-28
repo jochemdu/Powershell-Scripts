@@ -3,7 +3,10 @@
     "Type": "OnPrem",
     "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
     "EwsUrl": null,
-    "Autodiscover": true
+    "Autodiscover": true,
+    "ProxyUrl": null,
+    "Authentication": "Kerberos",
+    "SkipCertificateCheck": false
   },
   "Impersonation": {
     "SmtpAddress": "service.account@contoso.com"

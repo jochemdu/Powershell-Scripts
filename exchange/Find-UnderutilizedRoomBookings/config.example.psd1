@@ -6,16 +6,26 @@
     # Connection settings
     Connection        = @{
         # Type: Auto, OnPrem, or EXO
-        Type         = 'OnPrem'
+        Type                 = 'OnPrem'
 
         # Exchange PowerShell endpoint (On-Prem only)
-        ExchangeUri  = 'http://exchange.contoso.com/PowerShell/'
+        ExchangeUri          = 'http://exchange.contoso.com/PowerShell/'
 
         # Explicit EWS URL (optional, skips Autodiscover if set)
-        EwsUrl       = $null
+        EwsUrl               = $null
 
         # Use Autodiscover for EWS endpoint
-        Autodiscover = $true
+        Autodiscover         = $true
+
+        # Proxy server URL (optional, e.g., http://proxy.contoso.com:8080)
+        ProxyUrl             = $null
+
+        # Authentication method: Kerberos, Negotiate, Basic, Default
+        # Use 'Negotiate' if you encounter Kerberos SPN errors
+        Authentication       = 'Kerberos'
+
+        # Skip SSL certificate validation (for self-signed or mismatched certs)
+        SkipCertificateCheck = $false
     }
 
     # Impersonation settings

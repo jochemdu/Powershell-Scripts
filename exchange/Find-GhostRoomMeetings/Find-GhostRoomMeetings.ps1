@@ -145,6 +145,10 @@ param(
     [string]$ProxyUrl,
 
     [Parameter()]
+    [ValidateSet('Kerberos', 'Negotiate', 'Basic', 'Default')]
+    [string]$Authentication = 'Kerberos',
+
+    [Parameter()]
     [switch]$SkipCertificateCheck,
 
     [Parameter()]
@@ -195,6 +199,9 @@ if ($ConfigPath) {
         }
         if (-not $PSBoundParameters.ContainsKey('ProxyUrl') -and $conn.ContainsKey('ProxyUrl') -and $conn['ProxyUrl']) {
             $ProxyUrl = $conn['ProxyUrl']
+        }
+        if (-not $PSBoundParameters.ContainsKey('Authentication') -and $conn.ContainsKey('Authentication') -and $conn['Authentication']) {
+            $Authentication = $conn['Authentication']
         }
         if (-not $PSBoundParameters.ContainsKey('SkipCertificateCheck') -and $conn.ContainsKey('SkipCertificateCheck') -and $conn['SkipCertificateCheck']) {
             $SkipCertificateCheck = [switch]$true
@@ -442,13 +449,27 @@ if ($ExcelOutputPath) {
 $exchangeSession = $null
 
 try {
+    # Display connection parameters for debugging
+    Write-Verbose "=== Connection Parameters ==="
+    Write-Verbose "  ExchangeUri: $ExchangeUri"
+    Write-Verbose "  ConnectionType: $script:ExchangeConnectionType"
+    Write-Verbose "  Authentication: $Authentication"
+    Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
+    Write-Verbose "  SkipCertificateCheck: $SkipCertificateCheck"
+    Write-Verbose "  ImpersonationSmtp: $(if ($ImpersonationSmtp) { $ImpersonationSmtp } else { '(will resolve via Get-Mailbox)' })"
+    Write-Verbose "  Credential User: $($Credential.UserName)"
+    Write-Verbose "============================="
+
     # Connect to Exchange
     $exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri `
         -Credential $Credential `
         -Type $script:ExchangeConnectionType `
+        -Authentication $Authentication `
         -ProxyUrl $ProxyUrl `
         -SkipCertificateCheck:$SkipCertificateCheck `
         -TestMode:$TestMode
+
+    Write-Verbose "Exchange session established successfully"
 
     # Resolve ImpersonationSmtp via Get-Mailbox if not provided
     if (-not $ImpersonationSmtp) {

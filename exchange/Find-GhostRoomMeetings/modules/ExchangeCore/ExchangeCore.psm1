@@ -131,6 +131,8 @@ function Connect-ExchangeSession {
         Credentials for authentication.
     .PARAMETER Type
         OnPrem or EXO connection type.
+    .PARAMETER Authentication
+        Authentication method: Kerberos, Negotiate, Basic, Default. Default is Kerberos.
     .PARAMETER ProxyUrl
         Proxy server URL (e.g., http://proxy.contoso.com:8080).
     .PARAMETER SkipCertificateCheck
@@ -153,6 +155,10 @@ function Connect-ExchangeSession {
         [Parameter(Mandatory)]
         [ValidateSet('OnPrem', 'EXO')]
         [string]$Type,
+
+        [Parameter()]
+        [ValidateSet('Kerberos', 'Negotiate', 'Basic', 'Default')]
+        [string]$Authentication = 'Kerberos',
 
         [Parameter()]
         [string]$ProxyUrl,
@@ -195,18 +201,24 @@ function Connect-ExchangeSession {
         throw 'Credential required for on-premises Exchange connections.'
     }
 
-    Write-Verbose "Opening remote Exchange PowerShell session to $ConnectionUri"
+    Write-Verbose "=== Exchange Session Details ==="
+    Write-Verbose "  ConnectionUri: $ConnectionUri"
+    Write-Verbose "  Authentication: $Authentication"
+    Write-Verbose "  Credential User: $($Credential.UserName)"
+    Write-Verbose "  SkipCertificateCheck: $SkipCertificateCheck"
+    Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
+    Write-Verbose "================================="
     
     # Build session options
     $sessionOptionParams = @{}
     if ($SkipCertificateCheck) {
-        Write-Verbose 'Skipping SSL certificate validation'
+        Write-Verbose 'Adding session option: SkipCACheck, SkipCNCheck, SkipRevocationCheck'
         $sessionOptionParams['SkipCACheck'] = $true
         $sessionOptionParams['SkipCNCheck'] = $true
         $sessionOptionParams['SkipRevocationCheck'] = $true
     }
     if ($ProxyUrl) {
-        Write-Verbose "Using proxy: $ProxyUrl"
+        Write-Verbose "Adding session option: ProxyAccessType = IEConfig"
         $sessionOptionParams['ProxyAccessType'] = 'IEConfig'
     }
     $sessionOptions = New-PSSessionOption @sessionOptionParams
@@ -214,14 +226,43 @@ function Connect-ExchangeSession {
     $sessionParams = @{
         ConfigurationName = 'Microsoft.Exchange'
         ConnectionUri     = $ConnectionUri
-        Authentication    = 'Kerberos'
+        Authentication    = $Authentication
         Credential        = $Credential
         SessionOption     = $sessionOptions
     }
 
-    $session = New-PSSession @sessionParams
-    Import-PSSession $session -DisableNameChecking -AllowClobber | Out-Null
-    return $session
+    Write-Verbose "Creating PSSession with ConfigurationName: Microsoft.Exchange"
+    Write-Verbose "Attempting connection..."
+    
+    try {
+        $session = New-PSSession @sessionParams
+        Write-Verbose "PSSession created successfully. Session ID: $($session.Id), State: $($session.State)"
+        
+        Write-Verbose "Importing PSSession commands..."
+        Import-PSSession $session -DisableNameChecking -AllowClobber | Out-Null
+        Write-Verbose "PSSession commands imported successfully"
+        
+        return $session
+    }
+    catch {
+        Write-Verbose "ERROR creating PSSession!"
+        Write-Verbose "Exception Type: $($_.Exception.GetType().FullName)"
+        Write-Verbose "Exception Message: $($_.Exception.Message)"
+        if ($_.Exception.InnerException) {
+            Write-Verbose "Inner Exception: $($_.Exception.InnerException.Message)"
+        }
+        if ($_.ErrorDetails) {
+            Write-Verbose "Error Details: $($_.ErrorDetails)"
+        }
+        Write-Verbose "Full Error Record: $_"
+        Write-Verbose "Category Info: $($_.CategoryInfo)"
+        Write-Verbose "Fully Qualified Error ID: $($_.FullyQualifiedErrorId)"
+        
+        $innerMsg = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { '(none)' }
+        $detailsMsg = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { '(none)' }
+        Write-Error "Failed to connect to Exchange: $($_.Exception.Message) | Inner: $innerMsg | Details: $detailsMsg"
+        throw
+    }
 }
 
 function Disconnect-ExchangeSession {
@@ -302,9 +343,20 @@ function Connect-EwsService {
         throw 'Either -ExplicitUrl or -ImpersonationSmtp required for EWS connection.'
     }
 
+    Write-Verbose "=== EWS Connection Details ==="
+    Write-Verbose "  EwsAssemblyPath: $EwsAssemblyPath"
+    Write-Verbose "  ExplicitUrl: $(if ($ExplicitUrl) { $ExplicitUrl } else { '(using Autodiscover)' })"
+    Write-Verbose "  ImpersonationSmtp: $(if ($ImpersonationSmtp) { $ImpersonationSmtp } else { '(none)' })"
+    Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
+    Write-Verbose "  Credential User: $($Credential.UserName)"
+    Write-Verbose "==============================="
+
+    Write-Verbose "Loading EWS Managed API assembly..."
     Add-Type -Path $EwsAssemblyPath
+    Write-Verbose "EWS assembly loaded successfully"
 
     $exchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
+    Write-Verbose "Using Exchange version: $exchangeVersion"
 
     # PS5.1 compatible syntax
     if ($PSVersionTable.PSVersion.Major -ge 7) {
@@ -315,6 +367,8 @@ function Connect-EwsService {
     }
 
     $networkCred = $Credential.GetNetworkCredential()
+    Write-Verbose "Setting EWS credentials for user: $($networkCred.UserName)$(if ($networkCred.Domain) { '@' + $networkCred.Domain })"
+    
     if ($PSVersionTable.PSVersion.Major -ge 7) {
         $service.Credentials = [Microsoft.Exchange.WebServices.Data.WebCredentials]::new(
             $networkCred.UserName,
@@ -336,17 +390,28 @@ function Connect-EwsService {
         $webProxy = New-Object System.Net.WebProxy($ProxyUrl, $true)
         $webProxy.Credentials = $networkCred
         $service.WebProxy = $webProxy
+        Write-Verbose "EWS proxy configured"
     }
 
     if ($ExplicitUrl) {
+        Write-Verbose "Setting explicit EWS URL: $ExplicitUrl"
         $service.Url = [Uri]$ExplicitUrl
     }
     else {
+        Write-Verbose "Running Autodiscover for: $ImpersonationSmtp"
         $redirectCallback = { param($url) return $url -like 'https://*' }
-        $service.AutodiscoverUrl($ImpersonationSmtp, $redirectCallback)
+        try {
+            $service.AutodiscoverUrl($ImpersonationSmtp, $redirectCallback)
+            Write-Verbose "Autodiscover completed. EWS URL: $($service.Url)"
+        }
+        catch {
+            Write-Verbose "ERROR during Autodiscover: $($_.Exception.Message)"
+            throw
+        }
     }
 
     if ($ImpersonationSmtp) {
+        Write-Verbose "Setting impersonation for: $ImpersonationSmtp"
         $connectingIdType = [Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress
         if ($PSVersionTable.PSVersion.Major -ge 7) {
             $service.ImpersonatedUserId = [Microsoft.Exchange.WebServices.Data.ImpersonatedUserId]::new(
@@ -360,8 +425,10 @@ function Connect-EwsService {
                 $ImpersonationSmtp
             )
         }
+        Write-Verbose "Impersonation configured"
     }
 
+    Write-Verbose "EWS service configured successfully"
     return $service
 }
 
