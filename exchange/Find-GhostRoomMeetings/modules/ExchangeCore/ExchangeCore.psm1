@@ -209,6 +209,36 @@ function Connect-ExchangeSession {
     Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
     Write-Verbose "================================="
     
+    # Pre-flight connectivity check
+    try {
+        $uri = [Uri]$ConnectionUri
+        $testHost = $uri.Host
+        $testPort = if ($uri.Port -gt 0) { $uri.Port } elseif ($uri.Scheme -eq 'https') { 443 } else { 80 }
+        
+        Write-Verbose "Pre-flight check: Testing TCP connection to ${testHost}:${testPort}..."
+        $tcpTest = Test-NetConnection -ComputerName $testHost -Port $testPort -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        if ($tcpTest.TcpTestSucceeded) {
+            Write-Verbose "Pre-flight check: TCP connection to ${testHost}:${testPort} succeeded"
+        }
+        else {
+            Write-Warning "Pre-flight check: TCP connection to ${testHost}:${testPort} FAILED - check firewall/network"
+        }
+        
+        # Test WinRM port (5985 for HTTP, 5986 for HTTPS)
+        $winrmPort = if ($uri.Scheme -eq 'https') { 5986 } else { 5985 }
+        Write-Verbose "Pre-flight check: Testing WinRM port ${testHost}:${winrmPort}..."
+        $winrmTest = Test-NetConnection -ComputerName $testHost -Port $winrmPort -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        if ($winrmTest.TcpTestSucceeded) {
+            Write-Verbose "Pre-flight check: WinRM port ${testHost}:${winrmPort} is open"
+        }
+        else {
+            Write-Warning "Pre-flight check: WinRM port ${testHost}:${winrmPort} CLOSED - WinRM may not be enabled on server"
+        }
+    }
+    catch {
+        Write-Verbose "Pre-flight check: Could not test connectivity - $($_.Exception.Message)"
+    }
+    
     # Build session options
     $sessionOptionParams = @{}
     if ($SkipCertificateCheck) {
