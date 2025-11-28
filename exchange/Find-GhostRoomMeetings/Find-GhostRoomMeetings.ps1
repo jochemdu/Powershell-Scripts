@@ -142,6 +142,9 @@ param(
     [string]$EwsUrl,
 
     [Parameter()]
+    [switch]$SkipCertificateCheck,
+
+    [Parameter()]
     [switch]$TestMode,
 
     [Parameter()]
@@ -186,6 +189,9 @@ if ($ConfigPath) {
         }
         if (-not $PSBoundParameters.ContainsKey('ExchangeUri') -and $conn.ContainsKey('ExchangeUri')) {
             $ExchangeUri = $conn['ExchangeUri']
+        }
+        if (-not $PSBoundParameters.ContainsKey('SkipCertificateCheck') -and $conn.ContainsKey('SkipCertificateCheck') -and $conn['SkipCertificateCheck']) {
+            $SkipCertificateCheck = [switch]$true
         }
     }
 
@@ -434,6 +440,7 @@ try {
     $exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri `
         -Credential $Credential `
         -Type $script:ExchangeConnectionType `
+        -SkipCertificateCheck:$SkipCertificateCheck `
         -TestMode:$TestMode
 
     # Resolve ImpersonationSmtp via Get-Mailbox if not provided

@@ -131,6 +131,8 @@ function Connect-ExchangeSession {
         Credentials for authentication.
     .PARAMETER Type
         OnPrem or EXO connection type.
+    .PARAMETER SkipCertificateCheck
+        Skip SSL certificate validation (for self-signed or mismatched certs).
     .PARAMETER TestMode
         Skip actual connection for testing.
     .OUTPUTS
@@ -149,6 +151,9 @@ function Connect-ExchangeSession {
         [Parameter(Mandatory)]
         [ValidateSet('OnPrem', 'EXO')]
         [string]$Type,
+
+        [Parameter()]
+        [switch]$SkipCertificateCheck,
 
         [Parameter()]
         [switch]$TestMode
@@ -186,11 +191,20 @@ function Connect-ExchangeSession {
     }
 
     Write-Verbose "Opening remote Exchange PowerShell session to $ConnectionUri"
+    
+    # Build session options
+    $sessionOptions = New-PSSessionOption
+    if ($SkipCertificateCheck) {
+        Write-Verbose 'Skipping SSL certificate validation'
+        $sessionOptions = New-PSSessionOption -SkipCACheck -SkipCNCheck -SkipRevocationCheck
+    }
+    
     $sessionParams = @{
         ConfigurationName = 'Microsoft.Exchange'
         ConnectionUri     = $ConnectionUri
         Authentication    = 'Kerberos'
         Credential        = $Credential
+        SessionOption     = $sessionOptions
     }
 
     $session = New-PSSession @sessionParams
