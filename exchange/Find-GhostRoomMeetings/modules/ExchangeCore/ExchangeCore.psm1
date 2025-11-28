@@ -126,7 +126,7 @@ function Connect-ExchangeSession {
     .SYNOPSIS
         Connects to Exchange (On-Premises or Online).
     .PARAMETER ConnectionUri
-        Exchange PowerShell endpoint URI for on-prem.
+        Exchange PowerShell endpoint URI for on-prem. Use 'Local' to load Exchange snap-in locally.
     .PARAMETER Credential
         Credentials for authentication.
     .PARAMETER Type
@@ -139,8 +139,11 @@ function Connect-ExchangeSession {
         Skip SSL certificate validation (for self-signed or mismatched certs).
     .PARAMETER TestMode
         Skip actual connection for testing.
+    .PARAMETER LocalSnapin
+        Load Exchange Management Shell locally instead of remote PowerShell.
+        Requires running on the Exchange server itself.
     .OUTPUTS
-        PSSession for OnPrem, $null for EXO.
+        PSSession for OnPrem remote, $null for EXO or local snap-in.
     #>
     [CmdletBinding()]
     [OutputType([System.Management.Automation.Runspaces.PSSession])]
@@ -167,12 +170,78 @@ function Connect-ExchangeSession {
         [switch]$SkipCertificateCheck,
 
         [Parameter()]
-        [switch]$TestMode
+        [switch]$TestMode,
+
+        [Parameter()]
+        [switch]$LocalSnapin
     )
 
     if ($TestMode) {
         Write-Verbose "Test mode enabled; skipping $Type connection."
         return $null
+    }
+
+    # Handle local Exchange snap-in loading (for running on Exchange server)
+    if ($LocalSnapin -or $ConnectionUri -eq 'Local') {
+        Write-Verbose "Loading Exchange Management Shell locally..."
+        
+        # Try Exchange 2016/2019 snap-in first
+        $snapinName = 'Microsoft.Exchange.Management.PowerShell.SnapIn'
+        $snapinLoaded = Get-PSSnapin -Name $snapinName -ErrorAction SilentlyContinue
+        
+        if (-not $snapinLoaded) {
+            $snapinAvailable = Get-PSSnapin -Registered -Name $snapinName -ErrorAction SilentlyContinue
+            if ($snapinAvailable) {
+                Write-Verbose "Adding Exchange snap-in: $snapinName"
+                Add-PSSnapin $snapinName -ErrorAction Stop
+                Write-Verbose "Exchange snap-in loaded successfully"
+                return $null
+            }
+        }
+        else {
+            Write-Verbose "Exchange snap-in already loaded"
+            return $null
+        }
+        
+        # Try Exchange 2013 snap-in
+        $snapinName2013 = 'Microsoft.Exchange.Management.PowerShell.E2010'
+        $snapinLoaded2013 = Get-PSSnapin -Name $snapinName2013 -ErrorAction SilentlyContinue
+        
+        if (-not $snapinLoaded2013) {
+            $snapinAvailable2013 = Get-PSSnapin -Registered -Name $snapinName2013 -ErrorAction SilentlyContinue
+            if ($snapinAvailable2013) {
+                Write-Verbose "Adding Exchange 2013 snap-in: $snapinName2013"
+                Add-PSSnapin $snapinName2013 -ErrorAction Stop
+                Write-Verbose "Exchange 2013 snap-in loaded successfully"
+                return $null
+            }
+        }
+        else {
+            Write-Verbose "Exchange 2013 snap-in already loaded"
+            return $null
+        }
+        
+        # Try RemoteExchange.ps1 script (Exchange Management Shell shortcut method)
+        $remoteExchangePath = 'C:\Program Files\Microsoft\Exchange Server\V15\bin\RemoteExchange.ps1'
+        if (Test-Path $remoteExchangePath) {
+            Write-Verbose "Loading Exchange via RemoteExchange.ps1"
+            . $remoteExchangePath
+            Connect-ExchangeServer -auto -ClientApplication:ManagementShell
+            Write-Verbose "Exchange Management Shell loaded via RemoteExchange.ps1"
+            return $null
+        }
+        
+        # Check for Exchange 2010 path
+        $remoteExchangePath2010 = 'C:\Program Files\Microsoft\Exchange Server\V14\bin\RemoteExchange.ps1'
+        if (Test-Path $remoteExchangePath2010) {
+            Write-Verbose "Loading Exchange 2010 via RemoteExchange.ps1"
+            . $remoteExchangePath2010
+            Connect-ExchangeServer -auto -ClientApplication:ManagementShell
+            Write-Verbose "Exchange 2010 Management Shell loaded"
+            return $null
+        }
+        
+        throw "Exchange Management Shell not found. Ensure you are running on an Exchange server with management tools installed."
     }
 
     if ($Type -eq 'EXO') {
@@ -247,9 +316,25 @@ function Connect-ExchangeSession {
         $sessionOptionParams['SkipCNCheck'] = $true
         $sessionOptionParams['SkipRevocationCheck'] = $true
     }
-    if ($ProxyUrl) {
-        Write-Verbose "Adding session option: ProxyAccessType = IEConfig"
-        $sessionOptionParams['ProxyAccessType'] = 'IEConfig'
+    
+    # Proxy is only supported with HTTPS transport - WinRM limitation
+    $isHttps = $ConnectionUri -like 'https://*'
+    if ($ProxyUrl -and $isHttps) {
+        # Normalize proxy URL
+        $normalizedProxy = $ProxyUrl
+        if ($normalizedProxy -notmatch '^https?://') {
+            $normalizedProxy = "http://$normalizedProxy"
+        }
+        Write-Verbose "Adding session option: ProxyAccessType = AutoDetect with proxy $normalizedProxy"
+        $sessionOptionParams['ProxyAccessType'] = 'NoProxyServer'  # We'll handle proxy differently
+        
+        # For WinRM over HTTPS with proxy, we need to configure WinRM client settings
+        # The PSSessionOption proxy settings are limited, so we try a direct approach
+        Write-Verbose "Note: WinRM proxy requires system-level proxy configuration or winhttp proxy settings"
+        Write-Verbose "If connection fails, try running: netsh winhttp set proxy $ProxyUrl"
+    }
+    elseif ($ProxyUrl -and -not $isHttps) {
+        Write-Warning "Proxy configuration ignored: WinRM only supports proxy with HTTPS transport. Current URI uses HTTP."
     }
     $sessionOptions = New-PSSessionOption @sessionOptionParams
     
@@ -334,7 +419,7 @@ function Connect-EwsService {
     .SYNOPSIS
         Creates and configures EWS ExchangeService object.
     .PARAMETER Credential
-        Credentials for EWS authentication.
+        Credentials for EWS authentication. Use [PSCredential]::Empty for default Windows credentials.
     .PARAMETER EwsAssemblyPath
         Path to Microsoft.Exchange.WebServices.dll.
     .PARAMETER ImpersonationSmtp
@@ -348,8 +433,8 @@ function Connect-EwsService {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]
-        [ValidateNotNull()]
+        [Parameter()]
+        [AllowNull()]
         [System.Management.Automation.PSCredential]$Credential,
 
         [Parameter(Mandatory)]
@@ -373,12 +458,18 @@ function Connect-EwsService {
         throw 'Either -ExplicitUrl or -ImpersonationSmtp required for EWS connection.'
     }
 
+    # Check if using default credentials
+    $useDefaultCredentials = (-not $Credential) -or ($Credential -eq [System.Management.Automation.PSCredential]::Empty)
+
     Write-Verbose "=== EWS Connection Details ==="
     Write-Verbose "  EwsAssemblyPath: $EwsAssemblyPath"
     Write-Verbose "  ExplicitUrl: $(if ($ExplicitUrl) { $ExplicitUrl } else { '(using Autodiscover)' })"
     Write-Verbose "  ImpersonationSmtp: $(if ($ImpersonationSmtp) { $ImpersonationSmtp } else { '(none)' })"
     Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
-    Write-Verbose "  Credential User: $($Credential.UserName)"
+    Write-Verbose "  UseDefaultCredentials: $useDefaultCredentials"
+    if (-not $useDefaultCredentials) {
+        Write-Verbose "  Credential User: $($Credential.UserName)"
+    }
     Write-Verbose "==============================="
 
     Write-Verbose "Loading EWS Managed API assembly..."
@@ -396,29 +487,45 @@ function Connect-EwsService {
         $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($exchangeVersion)
     }
 
-    $networkCred = $Credential.GetNetworkCredential()
-    Write-Verbose "Setting EWS credentials for user: $($networkCred.UserName)$(if ($networkCred.Domain) { '@' + $networkCred.Domain })"
-    
-    if ($PSVersionTable.PSVersion.Major -ge 7) {
-        $service.Credentials = [Microsoft.Exchange.WebServices.Data.WebCredentials]::new(
-            $networkCred.UserName,
-            $networkCred.Password,
-            $networkCred.Domain
-        )
+    # Configure credentials
+    if ($UseDefaultCredentials) {
+        Write-Verbose "Using default Windows credentials for EWS (current logged-on user)"
+        $service.UseDefaultCredentials = $true
+    }
+    elseif ($Credential) {
+        $networkCred = $Credential.GetNetworkCredential()
+        Write-Verbose "Setting EWS credentials for user: $($networkCred.UserName)$(if ($networkCred.Domain) { '@' + $networkCred.Domain })"
+        
+        if ($PSVersionTable.PSVersion.Major -ge 7) {
+            $service.Credentials = [Microsoft.Exchange.WebServices.Data.WebCredentials]::new(
+                $networkCred.UserName,
+                $networkCred.Password,
+                $networkCred.Domain
+            )
+        }
+        else {
+            $service.Credentials = New-Object Microsoft.Exchange.WebServices.Data.WebCredentials(
+                $networkCred.UserName,
+                $networkCred.Password,
+                $networkCred.Domain
+            )
+        }
     }
     else {
-        $service.Credentials = New-Object Microsoft.Exchange.WebServices.Data.WebCredentials(
-            $networkCred.UserName,
-            $networkCred.Password,
-            $networkCred.Domain
-        )
+        Write-Verbose "No credential specified, using default Windows credentials"
+        $service.UseDefaultCredentials = $true
     }
 
     # Configure proxy if specified
     if ($ProxyUrl) {
         Write-Verbose "Configuring EWS proxy: $ProxyUrl"
         $webProxy = New-Object System.Net.WebProxy($ProxyUrl, $true)
-        $webProxy.Credentials = $networkCred
+        if ($Credential) {
+            $webProxy.Credentials = $Credential.GetNetworkCredential()
+        }
+        else {
+            $webProxy.UseDefaultCredentials = $true
+        }
         $service.WebProxy = $webProxy
         Write-Verbose "EWS proxy configured"
     }

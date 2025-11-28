@@ -141,6 +141,30 @@ Copy `config.example.json` to `config.json` and update values:
 .\Find-GhostRoomMeetings.ps1 -TestMode -Verbose
 ```
 
+### Local Snap-in Mode (Run on Exchange Server)
+
+When Remote PowerShell is blocked or returns 401 errors, run the script directly on the Exchange server using the local snap-in:
+
+```powershell
+# On the Exchange server - uses current Windows identity
+.\Find-GhostRoomMeetings.ps1 `
+    -LocalSnapin `
+    -EwsUrl https://mail.contoso.com/EWS/Exchange.asmx `
+    -ImpersonationSmtp service.account@contoso.com `
+    -OrganizationSmtpSuffix contoso.com `
+    -Verbose
+
+# With explicit credentials for EWS (e.g., service account)
+.\Find-GhostRoomMeetings.ps1 `
+    -LocalSnapin `
+    -Credential (Get-Credential) `
+    -EwsUrl https://mail.contoso.com/EWS/Exchange.asmx `
+    -OrganizationSmtpSuffix contoso.com `
+    -Verbose
+```
+
+**Note**: LocalSnapin mode uses your current Windows identity by default. You can optionally provide `-Credential` to use different credentials for EWS.
+
 ## Output
 
 ### CSV Report Columns
@@ -185,6 +209,16 @@ Copy `config.example.json` to `config.json` and update values:
 **"ActiveDirectory module not available"**
 - Install RSAT tools for on-prem deployments
 - Script will skip enabled/disabled check if unavailable
+
+**"401 Unauthorized" or Remote PowerShell blocked**
+- Try `-Authentication Negotiate` instead of Kerberos
+- Use `-LocalSnapin` to run directly on the Exchange server
+- Verify `RemotePowerShellEnabled` is `$true` for the service account
+
+**"Kerberos SPN error" or certificate errors**
+- Use `-Authentication Negotiate` for NTLM fallback
+- Use `-SkipCertificateCheck` for self-signed or mismatched certificates
+- Use `-LocalSnapin` to bypass Remote PowerShell entirely
 
 ### Verbose Logging
 

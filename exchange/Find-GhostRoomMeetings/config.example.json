@@ -1,4 +1,5 @@
 {
+  "_comment_LocalSnapin": "Set LocalSnapin to true to run on Exchange server with local snap-in. No credentials required - uses current Windows identity.",
   "Connection": {
     "Type": "OnPrem",
     "ExchangeUri": "http://exchange.contoso.com/PowerShell/",
@@ -6,7 +7,8 @@
     "Autodiscover": true,
     "ProxyUrl": null,
     "Authentication": "Kerberos",
-    "SkipCertificateCheck": false
+    "SkipCertificateCheck": false,
+    "LocalSnapin": false
   },
   "Impersonation": {
     "SmtpAddress": "service.account@contoso.com"

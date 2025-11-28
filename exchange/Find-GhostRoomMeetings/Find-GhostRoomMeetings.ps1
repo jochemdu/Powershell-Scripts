@@ -64,6 +64,12 @@
 .PARAMETER EwsUrl
     Explicit EWS endpoint URL. Skips Autodiscover if provided.
 
+.PARAMETER LocalSnapin
+    Load Exchange Management Shell locally instead of using remote PowerShell.
+    Use this when running directly on an Exchange server.
+    Credentials are optional - uses current Windows identity if not provided.
+    Alias: -Local
+
 .PARAMETER TestMode
     Run in test mode without actual Exchange/EWS connections.
 
@@ -75,6 +81,14 @@
 
 .EXAMPLE
     .\Find-GhostRoomMeetings.ps1 -ConfigPath ./config.json -SendInquiry -NotificationFrom admin@contoso.com
+
+.EXAMPLE
+    .\Find-GhostRoomMeetings.ps1 -LocalSnapin -ImpersonationSmtp admin@contoso.com -Verbose
+    Runs on an Exchange server using the local snap-in with current Windows identity.
+
+.EXAMPLE
+    .\Find-GhostRoomMeetings.ps1 -LocalSnapin -Credential (Get-Credential) -ImpersonationSmtp admin@contoso.com
+    Runs on an Exchange server using the local snap-in with explicit credentials for EWS.
 
 .NOTES
     - Requires PowerShell 5.1 or later (7.0+ recommended for parallel processing)
@@ -150,6 +164,10 @@ param(
 
     [Parameter()]
     [switch]$SkipCertificateCheck,
+
+    [Parameter()]
+    [Alias('Local')]
+    [switch]$LocalSnapin,
 
     [Parameter()]
     [switch]$TestMode,
@@ -424,8 +442,8 @@ if ($TestMode) {
     return
 }
 
-# Validate required parameters
-if (-not $Credential) {
+# Validate required parameters - credential not needed for local snap-in
+if (-not $Credential -and -not $LocalSnapin) {
     $Credential = Get-Credential -Message 'Enter Exchange/AD credentials'
 }
 
@@ -456,8 +474,9 @@ try {
     Write-Verbose "  Authentication: $Authentication"
     Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
     Write-Verbose "  SkipCertificateCheck: $SkipCertificateCheck"
+    Write-Verbose "  LocalSnapin: $LocalSnapin"
     Write-Verbose "  ImpersonationSmtp: $(if ($ImpersonationSmtp) { $ImpersonationSmtp } else { '(will resolve via Get-Mailbox)' })"
-    Write-Verbose "  Credential User: $($Credential.UserName)"
+    Write-Verbose "  Credential User: $(if ($Credential) { $Credential.UserName } else { '(current user)' })"
     Write-Verbose "============================="
 
     # Connect to Exchange
@@ -467,16 +486,17 @@ try {
         -Authentication $Authentication `
         -ProxyUrl $ProxyUrl `
         -SkipCertificateCheck:$SkipCertificateCheck `
+        -LocalSnapin:$LocalSnapin `
         -TestMode:$TestMode
 
     Write-Verbose "Exchange session established successfully"
 
     # Resolve ImpersonationSmtp via Get-Mailbox if not provided
     if (-not $ImpersonationSmtp) {
-        if ($Credential.UserName -match '@') {
+        if ($Credential -and $Credential.UserName -match '@') {
             $ImpersonationSmtp = $Credential.UserName
         }
-        else {
+        elseif ($Credential) {
             # Extract username from DOMAIN\username format
             $username = $Credential.UserName -replace '^.*\\', ''
             try {
@@ -488,12 +508,34 @@ try {
                 throw "Could not resolve SMTP address for '$username' via Get-Mailbox. Provide -ImpersonationSmtp explicitly."
             }
         }
+        elseif ($LocalSnapin) {
+            # LocalSnapin without credential - try to resolve current user's mailbox
+            $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            $username = $currentUser -replace '^.*\\', ''
+            Write-Verbose "LocalSnapin mode without credential, resolving mailbox for current user: $username"
+            try {
+                $mailbox = Get-Mailbox -Identity $username -ErrorAction Stop
+                $ImpersonationSmtp = $mailbox.PrimarySmtpAddress.ToString()
+                Write-Verbose "Resolved ImpersonationSmtp via Get-Mailbox for current user: $ImpersonationSmtp"
+            }
+            catch {
+                throw "Could not resolve SMTP address for current user '$username' via Get-Mailbox. Provide -ImpersonationSmtp explicitly."
+            }
+        }
     }
 
     # Connect to EWS
     $ewsParams = @{
-        Credential      = $Credential
         EwsAssemblyPath = $EwsAssemblyPath
+    }
+    # Credential is optional for local snap-in (uses current Windows identity)
+    if ($Credential) {
+        $ewsParams['Credential'] = $Credential
+    }
+    elseif ($LocalSnapin) {
+        # Use current Windows identity for EWS when running locally
+        Write-Verbose "Using default Windows credentials for EWS (LocalSnapin mode)"
+        $ewsParams['UseDefaultCredentials'] = $true
     }
     if ($EwsUrl) {
         $ewsParams['ExplicitUrl'] = $EwsUrl
