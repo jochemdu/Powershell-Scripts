@@ -131,6 +131,8 @@ function Connect-ExchangeSession {
         Credentials for authentication.
     .PARAMETER Type
         OnPrem or EXO connection type.
+    .PARAMETER ProxyUrl
+        Proxy server URL (e.g., http://proxy.contoso.com:8080).
     .PARAMETER SkipCertificateCheck
         Skip SSL certificate validation (for self-signed or mismatched certs).
     .PARAMETER TestMode
@@ -151,6 +153,9 @@ function Connect-ExchangeSession {
         [Parameter(Mandatory)]
         [ValidateSet('OnPrem', 'EXO')]
         [string]$Type,
+
+        [Parameter()]
+        [string]$ProxyUrl,
 
         [Parameter()]
         [switch]$SkipCertificateCheck,
@@ -193,11 +198,18 @@ function Connect-ExchangeSession {
     Write-Verbose "Opening remote Exchange PowerShell session to $ConnectionUri"
     
     # Build session options
-    $sessionOptions = New-PSSessionOption
+    $sessionOptionParams = @{}
     if ($SkipCertificateCheck) {
         Write-Verbose 'Skipping SSL certificate validation'
-        $sessionOptions = New-PSSessionOption -SkipCACheck -SkipCNCheck -SkipRevocationCheck
+        $sessionOptionParams['SkipCACheck'] = $true
+        $sessionOptionParams['SkipCNCheck'] = $true
+        $sessionOptionParams['SkipRevocationCheck'] = $true
     }
+    if ($ProxyUrl) {
+        Write-Verbose "Using proxy: $ProxyUrl"
+        $sessionOptionParams['ProxyAccessType'] = 'IEConfig'
+    }
+    $sessionOptions = New-PSSessionOption @sessionOptionParams
     
     $sessionParams = @{
         ConfigurationName = 'Microsoft.Exchange'
@@ -258,6 +270,8 @@ function Connect-EwsService {
         SMTP address for impersonation and autodiscover.
     .PARAMETER ExplicitUrl
         Explicit EWS endpoint URL (skips autodiscover).
+    .PARAMETER ProxyUrl
+        Proxy server URL (e.g., http://proxy.contoso.com:8080).
     .OUTPUTS
         Microsoft.Exchange.WebServices.Data.ExchangeService
     #>
@@ -278,7 +292,10 @@ function Connect-EwsService {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string]$ExplicitUrl
+        [string]$ExplicitUrl,
+
+        [Parameter()]
+        [string]$ProxyUrl
     )
 
     if (-not $ExplicitUrl -and -not $ImpersonationSmtp) {
@@ -311,6 +328,14 @@ function Connect-EwsService {
             $networkCred.Password,
             $networkCred.Domain
         )
+    }
+
+    # Configure proxy if specified
+    if ($ProxyUrl) {
+        Write-Verbose "Configuring EWS proxy: $ProxyUrl"
+        $webProxy = New-Object System.Net.WebProxy($ProxyUrl, $true)
+        $webProxy.Credentials = $networkCred
+        $service.WebProxy = $webProxy
     }
 
     if ($ExplicitUrl) {

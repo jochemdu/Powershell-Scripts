@@ -142,6 +142,9 @@ param(
     [string]$EwsUrl,
 
     [Parameter()]
+    [string]$ProxyUrl,
+
+    [Parameter()]
     [switch]$SkipCertificateCheck,
 
     [Parameter()]
@@ -189,6 +192,9 @@ if ($ConfigPath) {
         }
         if (-not $PSBoundParameters.ContainsKey('ExchangeUri') -and $conn.ContainsKey('ExchangeUri')) {
             $ExchangeUri = $conn['ExchangeUri']
+        }
+        if (-not $PSBoundParameters.ContainsKey('ProxyUrl') -and $conn.ContainsKey('ProxyUrl') -and $conn['ProxyUrl']) {
+            $ProxyUrl = $conn['ProxyUrl']
         }
         if (-not $PSBoundParameters.ContainsKey('SkipCertificateCheck') -and $conn.ContainsKey('SkipCertificateCheck') -and $conn['SkipCertificateCheck']) {
             $SkipCertificateCheck = [switch]$true
@@ -440,6 +446,7 @@ try {
     $exchangeSession = Connect-ExchangeSession -ConnectionUri $ExchangeUri `
         -Credential $Credential `
         -Type $script:ExchangeConnectionType `
+        -ProxyUrl $ProxyUrl `
         -SkipCertificateCheck:$SkipCertificateCheck `
         -TestMode:$TestMode
 
@@ -472,6 +479,9 @@ try {
     }
     if ($ImpersonationSmtp) {
         $ewsParams['ImpersonationSmtp'] = $ImpersonationSmtp
+    }
+    if ($ProxyUrl) {
+        $ewsParams['ProxyUrl'] = $ProxyUrl
     }
 
     $ews = Connect-EwsService @ewsParams
