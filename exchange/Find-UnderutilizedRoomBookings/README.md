@@ -8,8 +8,12 @@ Detects room mailbox meetings where large rooms are booked for few participants,
 - Scans room mailbox calendars via EWS
 - Filters rooms by minimum capacity threshold
 - Identifies meetings with few participants in large rooms
-- Exports results to CSV
+- **Validates organizer status** (Active, Disabled, NotFound, External)
+- **Matches external addresses to internal users** (e.g., `user@external.domain.com` → `user@domain.com`)
+- Auto-handles large calendars with chunking
+- Exports results to CSV with timestamps
 - Configuration via JSON or PowerShell Data File (PSD1)
+- **LocalSnapin mode** for running on Exchange servers
 - Compatible with PowerShell 5.1+
 
 ## Requirements
@@ -74,7 +78,10 @@ Copy `config.example.json` to `config.json` and update values:
 | `Connection.Type` | string | Auto | `Auto`, `OnPrem`, or `EXO` |
 | `Connection.ExchangeUri` | string | - | Exchange PowerShell endpoint |
 | `Connection.EwsUrl` | string | null | Explicit EWS URL (skips Autodiscover) |
+| `Connection.SkipCertificateCheck` | bool | false | Skip SSL certificate validation |
+| `Connection.LocalSnapin` | bool | false | Use local Exchange snap-in |
 | `Impersonation.SmtpAddress` | string | - | SMTP for EWS impersonation |
+| `OrganizationSuffix` | string | - | Email domain for external user matching |
 | `MonthsAhead` | int | 1 | Months ahead to scan |
 | `MonthsBehind` | int | 0 | Months behind to scan |
 | `MinimumCapacity` | int | 6 | Only check rooms with this capacity or higher |
@@ -135,10 +142,13 @@ Copy `config.example.json` to `config.json` and update values:
 
 ### Local Snap-in Mode (Run on Exchange Server)
 
-When Remote PowerShell is blocked or returns 401 errors, run the script directly on the Exchange server using the local snap-in:
+When Remote PowerShell is blocked or returns 401 errors, run the script directly on the Exchange server (or a server with Exchange Management Tools installed) using the local snap-in:
 
 ```powershell
-# On the Exchange server - uses current Windows identity
+# Using config file (recommended)
+.\Find-UnderutilizedRoomBookings.ps1 -LocalSnapin -ConfigPath .\config.psd1 -Verbose
+
+# Minimal command - uses current Windows identity
 .\Find-UnderutilizedRoomBookings.ps1 `
     -LocalSnapin `
     -EwsUrl https://mail.contoso.com/EWS/Exchange.asmx `
@@ -153,9 +163,20 @@ When Remote PowerShell is blocked or returns 401 errors, run the script directly
     -Credential (Get-Credential) `
     -EwsUrl https://mail.contoso.com/EWS/Exchange.asmx `
     -Verbose
+
+# With SSL certificate bypass (self-signed certs)
+.\Find-UnderutilizedRoomBookings.ps1 `
+    -LocalSnapin `
+    -ConfigPath .\config.psd1 `
+    -SkipCertificateCheck `
+    -Verbose
 ```
 
-**Note**: LocalSnapin mode uses your current Windows identity by default. You can optionally provide `-Credential` to use different credentials for EWS.
+**Note**: LocalSnapin mode:
+- Works on Exchange servers or servers with Exchange Management Tools installed
+- Uses your current Windows identity by default
+- Supports both Windows PowerShell 5.1 (snap-ins) and PowerShell 7+ (RemoteExchange.ps1)
+- You can optionally provide `-Credential` to use different credentials for EWS
 
 ## Output
 
@@ -166,20 +187,24 @@ When Remote PowerShell is blocked or returns 401 errors, run the script directly
 | Room | Room mailbox SMTP address |
 | DisplayName | Room display name |
 | Capacity | Room capacity (seats) |
+| FillPercentage | Percentage of capacity used (ParticipantCount / Capacity * 100) |
 | Subject | Meeting subject |
 | Start | Meeting start time |
 | End | Meeting end time |
-| Organizer | Meeting organizer SMTP |
+| Organizer | Meeting organizer SMTP (original) |
+| OrganizerStatus | `Active`, `Disabled`, `NotFound`, or `External` |
+| OrganizerType | `User`, `SharedMailbox`, `RoomMailbox`, `External`, etc. |
+| MatchedInternal | Internal SMTP if external was matched |
 | ParticipantCount | Number of distinct participants |
 | Participants | Semicolon-separated participant list |
 | UniqueId | EWS item unique identifier |
 
 ### Example Output
 
-| Room | DisplayName | Capacity | Subject | ParticipantCount |
-|------|-------------|----------|---------|------------------|
-| conf-large@contoso.com | Large Conference Room | 12 | 1:1 Meeting | 2 |
-| boardroom@contoso.com | Executive Boardroom | 20 | Quick Sync | 1 |
+| Room | DisplayName | Capacity | FillPercentage | Subject | ParticipantCount | OrganizerStatus |
+|------|-------------|----------|----------------|---------|------------------|-----------------|
+| conf-large@contoso.com | Large Conference Room | 12 | 16.7% | 1:1 Meeting | 2 | Active |
+| boardroom@contoso.com | Executive Boardroom | 20 | 5% | Quick Sync | 1 | Disabled |
 
 ## Use Cases
 

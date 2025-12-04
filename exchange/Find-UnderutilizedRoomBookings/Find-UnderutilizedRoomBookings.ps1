@@ -240,10 +240,18 @@ if ($ConfigPath) {
 # Resolve connection type
 $script:ExchangeConnectionType = Get-ResolvedConnectionType -ConnectionType $ConnectionType -ExchangeUri $ExchangeUri
 
-# Set OutputPath with timestamp if not provided
+# Set OutputPath with timestamp
+$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 if (-not $OutputPath) {
-    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $OutputPath = Join-Path -Path $PWD -ChildPath "underutilized-room-bookings-$timestamp.csv"
+}
+else {
+    # Insert timestamp before file extension
+    $outputDir = Split-Path -Path $OutputPath -Parent
+    $outputName = [System.IO.Path]::GetFileNameWithoutExtension($OutputPath)
+    $outputExt = [System.IO.Path]::GetExtension($OutputPath)
+    if (-not $outputDir) { $outputDir = $PWD }
+    $OutputPath = Join-Path -Path $outputDir -ChildPath "$outputName-$timestamp$outputExt"
 }
 
 #endregion Configuration Loading
@@ -399,10 +407,18 @@ function Find-UnderutilizedMeetings {
                         -ConnectionType $ConnectionType
                 }
 
+                # Calculate fill percentage (participants / capacity * 100)
+                $fillPercentage = if ($room.ResourceCapacity -gt 0) {
+                    [math]::Round(($participantInfo.Count / $room.ResourceCapacity) * 100, 1)
+                } else {
+                    0
+                }
+
                 $entry = [PSCustomObject]@{
                     Room              = $roomSmtp
                     DisplayName       = $room.DisplayName
                     Capacity          = $room.ResourceCapacity
+                    FillPercentage    = $fillPercentage
                     Subject           = $meeting.Subject
                     Start             = $meeting.Start
                     End               = $meeting.End

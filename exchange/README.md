@@ -52,17 +52,31 @@ exchange/
 ### Find-GhostRoomMeetings
 
 ```powershell
+# With config file and credentials
 .\Find-GhostRoomMeetings\Find-GhostRoomMeetings.ps1 `
-    -ConfigPath .\Find-GhostRoomMeetings\config.json `
+    -ConfigPath .\Find-GhostRoomMeetings\config.psd1 `
     -Credential (Get-Credential)
+
+# LocalSnapin mode (run on Exchange server or server with Exchange Management Tools)
+.\Find-GhostRoomMeetings\Find-GhostRoomMeetings.ps1 `
+    -LocalSnapin `
+    -ConfigPath .\Find-GhostRoomMeetings\config.psd1 `
+    -Verbose
 ```
 
 ### Find-UnderutilizedRoomBookings
 
 ```powershell
+# With config file and credentials
 .\Find-UnderutilizedRoomBookings\Find-UnderutilizedRoomBookings.ps1 `
-    -ConfigPath .\Find-UnderutilizedRoomBookings\config.json `
+    -ConfigPath .\Find-UnderutilizedRoomBookings\config.psd1 `
     -Credential (Get-Credential)
+
+# LocalSnapin mode (run on Exchange server or server with Exchange Management Tools)
+.\Find-UnderutilizedRoomBookings\Find-UnderutilizedRoomBookings.ps1 `
+    -LocalSnapin `
+    -ConfigPath .\Find-UnderutilizedRoomBookings\config.psd1 `
+    -Verbose
 ```
 
 ## Shared Module
@@ -70,10 +84,28 @@ exchange/
 Both scripts use the `ExchangeCore` module located in each script's `modules/` directory:
 
 - `Import-ConfigurationFile` - Load JSON/PSD1 configs
-- `Connect-ExchangeSession` / `Disconnect-ExchangeSession` - Exchange connections
-- `Connect-EwsService` - EWS service setup
-- `Get-RoomCalendarItems` - Retrieve calendar meetings
+- `Connect-ExchangeSession` / `Disconnect-ExchangeSession` - Exchange connections (supports LocalSnapin)
+- `Connect-EwsService` - EWS service setup (supports SkipCertificateCheck)
+- `Get-RoomCalendarItems` - Retrieve calendar meetings (auto-chunks large calendars)
+- `Get-OrganizerState` - Check organizer status with external user matching
 - `Get-ResolvedConnectionType` - Auto-detect OnPrem/EXO
+
+## Running on Exchange Server (LocalSnapin Mode)
+
+When Remote PowerShell is blocked or you get 401 errors, use `-LocalSnapin` to run directly on an Exchange server or a server with Exchange Management Tools:
+
+```powershell
+# From Exchange Management Shell or any PowerShell on Exchange server
+.\Find-GhostRoomMeetings.ps1 -LocalSnapin -ConfigPath .\config.psd1 -Verbose
+
+# With SSL cert bypass (self-signed certs)
+.\Find-GhostRoomMeetings.ps1 -LocalSnapin -ConfigPath .\config.psd1 -SkipCertificateCheck -Verbose
+```
+
+LocalSnapin mode:
+- Uses current Windows identity by default
+- Works with Windows PowerShell 5.1 (snap-ins) and PowerShell 7+ (RemoteExchange.ps1)
+- Requires Exchange Management Tools installed
 
 ## Additional Documentation
 

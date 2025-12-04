@@ -7,9 +7,13 @@ Audits room mailbox calendars to identify "ghost" meetings where the organizer i
 - Supports both Exchange On-Premises and Exchange Online
 - Scans room mailbox calendars via EWS
 - Validates organizer status (Active, Disabled, NotFound, External)
-- Exports results to CSV and Excel (XLSX)
-- Optional email notifications to attendees of ghost meetings
+- **Matches external addresses to internal users** (e.g., `user@external.domain.com` → `user@domain.com`)
+- Detects organizer mailbox type (User, SharedMailbox, RoomMailbox, etc.)
+- Auto-handles large calendars with chunking
+- Exports results to CSV with timestamps
+- Optional Excel (XLSX) export and email notifications
 - Configuration via JSON or PowerShell Data File (PSD1)
+- **LocalSnapin mode** for running on Exchange servers
 - Compatible with PowerShell 5.1+ (7.0+ recommended)
 
 ## Requirements
@@ -143,10 +147,13 @@ Copy `config.example.json` to `config.json` and update values:
 
 ### Local Snap-in Mode (Run on Exchange Server)
 
-When Remote PowerShell is blocked or returns 401 errors, run the script directly on the Exchange server using the local snap-in:
+When Remote PowerShell is blocked or returns 401 errors, run the script directly on the Exchange server (or a server with Exchange Management Tools installed) using the local snap-in:
 
 ```powershell
-# On the Exchange server - uses current Windows identity
+# Using config file (recommended)
+.\Find-GhostRoomMeetings.ps1 -LocalSnapin -ConfigPath .\config.psd1 -Verbose
+
+# Minimal command - uses current Windows identity
 .\Find-GhostRoomMeetings.ps1 `
     -LocalSnapin `
     -EwsUrl https://mail.contoso.com/EWS/Exchange.asmx `
@@ -161,9 +168,20 @@ When Remote PowerShell is blocked or returns 401 errors, run the script directly
     -EwsUrl https://mail.contoso.com/EWS/Exchange.asmx `
     -OrganizationSmtpSuffix contoso.com `
     -Verbose
+
+# With SSL certificate bypass (self-signed certs)
+.\Find-GhostRoomMeetings.ps1 `
+    -LocalSnapin `
+    -ConfigPath .\config.psd1 `
+    -SkipCertificateCheck `
+    -Verbose
 ```
 
-**Note**: LocalSnapin mode uses your current Windows identity by default. You can optionally provide `-Credential` to use different credentials for EWS.
+**Note**: LocalSnapin mode:
+- Works on Exchange servers or servers with Exchange Management Tools installed
+- Uses your current Windows identity by default
+- Supports both Windows PowerShell 5.1 (snap-ins) and PowerShell 7+ (RemoteExchange.ps1)
+- You can optionally provide `-Credential` to use different credentials for EWS
 
 ## Output
 
@@ -175,8 +193,10 @@ When Remote PowerShell is blocked or returns 401 errors, run the script directly
 | Subject | Meeting subject |
 | Start | Meeting start time |
 | End | Meeting end time |
-| Organizer | Organizer SMTP address |
+| Organizer | Organizer SMTP address (original) |
 | OrganizerStatus | `Active`, `Disabled`, `NotFound`, or `External` |
+| OrganizerType | `User`, `SharedMailbox`, `RoomMailbox`, `External`, etc. |
+| MatchedInternal | Internal SMTP if external was matched (e.g., `user@contoso.com`) |
 | IsRecurring | Whether meeting is recurring |
 | Attendees | Semicolon-separated attendee list |
 | UniqueId | EWS item unique identifier |
@@ -189,6 +209,17 @@ When Remote PowerShell is blocked or returns 401 errors, run the script directly
 | `Disabled` | Organizer account is disabled |
 | `NotFound` | Organizer not found in directory |
 | `External` | Organizer is outside the organization |
+
+### External User Matching
+
+The script can match external email addresses to internal users based on the local part (before `@`):
+
+| External Address | OrganizationSuffix | Matched Internal |
+|------------------|-------------------|------------------|
+| `john.doe@external.contoso.com` | `contoso.com` | `john.doe@contoso.com` |
+| `jane.smith@partner.domain.com` | `contoso.com` | *(not matched - truly external)* |
+
+This is useful when users from other zones/tenants have different email domains but the same username.
 
 ## Troubleshooting
 
