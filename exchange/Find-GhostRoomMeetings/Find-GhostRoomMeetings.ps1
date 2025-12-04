@@ -66,9 +66,13 @@
 
 .PARAMETER LocalSnapin
     Load Exchange Management Shell locally instead of using remote PowerShell.
-    Use this when running directly on an Exchange server.
+    Use this when running on a server with Exchange Management Tools installed.
     Credentials are optional - uses current Windows identity if not provided.
     Alias: -Local
+
+.PARAMETER ExchangeServer
+    Exchange server FQDN to connect to when using LocalSnapin mode.
+    If not specified, auto-discovery is used (which may fail if the auto-discovered server is unreachable).
 
 .PARAMETER TestMode
     Run in test mode without actual Exchange/EWS connections.
@@ -128,7 +132,7 @@ param(
 
     [Parameter()]
     [ValidateNotNullOrEmpty()]
-    [string]$OutputPath = (Join-Path -Path $PWD -ChildPath 'ghost-meetings-report.csv'),
+    [string]$OutputPath,
 
     [Parameter()]
     [string]$ExcelOutputPath,
@@ -168,6 +172,10 @@ param(
     [Parameter()]
     [Alias('Local')]
     [switch]$LocalSnapin,
+
+    [Parameter()]
+    [ValidateNotNullOrEmpty()]
+    [string]$ExchangeServer,
 
     [Parameter()]
     [switch]$TestMode,
@@ -265,6 +273,31 @@ if ($ConfigPath) {
 
 # Resolve connection type
 $script:ExchangeConnectionType = Get-ResolvedConnectionType -ConnectionType $ConnectionType -ExchangeUri $ExchangeUri
+
+# Generate timestamp for output filenames
+$script:ReportTimestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+
+# Set default output paths with timestamp if not specified
+if (-not $OutputPath) {
+    $OutputPath = Join-Path -Path $PWD -ChildPath "ghost-meetings-report_$($script:ReportTimestamp).csv"
+}
+elseif ($OutputPath -notmatch '\d{8}-\d{6}') {
+    # Add timestamp to user-specified path if it doesn't already have one
+    $outputDir = Split-Path -Path $OutputPath -Parent
+    $outputName = [System.IO.Path]::GetFileNameWithoutExtension($OutputPath)
+    $outputExt = [System.IO.Path]::GetExtension($OutputPath)
+    if (-not $outputDir) { $outputDir = $PWD }
+    $OutputPath = Join-Path -Path $outputDir -ChildPath "${outputName}_$($script:ReportTimestamp)${outputExt}"
+}
+
+if ($ExcelOutputPath -and $ExcelOutputPath -notmatch '\d{8}-\d{6}') {
+    # Add timestamp to Excel path if it doesn't already have one
+    $excelDir = Split-Path -Path $ExcelOutputPath -Parent
+    $excelName = [System.IO.Path]::GetFileNameWithoutExtension($ExcelOutputPath)
+    $excelExt = [System.IO.Path]::GetExtension($ExcelOutputPath)
+    if (-not $excelDir) { $excelDir = $PWD }
+    $ExcelOutputPath = Join-Path -Path $excelDir -ChildPath "${excelName}_$($script:ReportTimestamp)${excelExt}"
+}
 
 #endregion Configuration Loading
 
@@ -392,15 +425,17 @@ function Find-GhostMeetings {
                 Where-Object { $_ -and $_ -ne $meeting.Organizer }
 
             $entry = [PSCustomObject]@{
-                Room            = $meeting.Room
-                Subject         = $meeting.Subject
-                Start           = $meeting.Start
-                End             = $meeting.End
-                Organizer       = $meeting.Organizer
-                OrganizerStatus = $organizerState.Status
-                IsRecurring     = $meeting.IsRecurring
-                Attendees       = $attendees -join ';'
-                UniqueId        = $meeting.UniqueId
+                Room              = $meeting.Room
+                Subject           = $meeting.Subject
+                Start             = $meeting.Start
+                End               = $meeting.End
+                Organizer         = $meeting.Organizer
+                OrganizerStatus   = $organizerState.Status
+                OrganizerType     = $organizerState.MailboxType
+                MatchedInternal   = $organizerState.ResolvedSmtp
+                IsRecurring       = $meeting.IsRecurring
+                Attendees         = $attendees -join ';'
+                UniqueId          = $meeting.UniqueId
             }
 
             $report.Add($entry)
@@ -475,6 +510,7 @@ try {
     Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
     Write-Verbose "  SkipCertificateCheck: $SkipCertificateCheck"
     Write-Verbose "  LocalSnapin: $LocalSnapin"
+    Write-Verbose "  ExchangeServer: $(if ($ExchangeServer) { $ExchangeServer } else { '(auto-discover)' })"
     Write-Verbose "  ImpersonationSmtp: $(if ($ImpersonationSmtp) { $ImpersonationSmtp } else { '(will resolve via Get-Mailbox)' })"
     Write-Verbose "  Credential User: $(if ($Credential) { $Credential.UserName } else { '(current user)' })"
     Write-Verbose "============================="
@@ -487,6 +523,7 @@ try {
         -ProxyUrl $ProxyUrl `
         -SkipCertificateCheck:$SkipCertificateCheck `
         -LocalSnapin:$LocalSnapin `
+        -ExchangeServer $ExchangeServer `
         -TestMode:$TestMode
 
     Write-Verbose "Exchange session established successfully"
@@ -529,13 +566,13 @@ try {
         EwsAssemblyPath = $EwsAssemblyPath
     }
     # Credential is optional for local snap-in (uses current Windows identity)
+    # When no credential is passed, Connect-EwsService uses UseDefaultCredentials internally
     if ($Credential) {
         $ewsParams['Credential'] = $Credential
     }
     elseif ($LocalSnapin) {
-        # Use current Windows identity for EWS when running locally
+        # Don't pass Credential - Connect-EwsService will use default Windows credentials
         Write-Verbose "Using default Windows credentials for EWS (LocalSnapin mode)"
-        $ewsParams['UseDefaultCredentials'] = $true
     }
     if ($EwsUrl) {
         $ewsParams['ExplicitUrl'] = $EwsUrl
@@ -545,6 +582,9 @@ try {
     }
     if ($ProxyUrl) {
         $ewsParams['ProxyUrl'] = $ProxyUrl
+    }
+    if ($SkipCertificateCheck) {
+        $ewsParams['SkipCertificateCheck'] = $true
     }
 
     $ews = Connect-EwsService @ewsParams
@@ -562,7 +602,7 @@ try {
         ThrottleLimit        = $ThrottleLimit
     }
 
-    $results = Find-GhostMeetings @findParams
+    $results = @(Find-GhostMeetings @findParams)
 
     # Output results
     if ($results.Count -eq 0) {

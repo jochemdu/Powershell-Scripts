@@ -141,7 +141,10 @@ function Connect-ExchangeSession {
         Skip actual connection for testing.
     .PARAMETER LocalSnapin
         Load Exchange Management Shell locally instead of remote PowerShell.
-        Requires running on the Exchange server itself.
+        Uses RemoteExchange.ps1 to connect.
+    .PARAMETER ExchangeServer
+        Exchange server FQDN to connect to when using LocalSnapin mode.
+        If not specified, uses -auto (lets Exchange choose a server).
     .OUTPUTS
         PSSession for OnPrem remote, $null for EXO or local snap-in.
     #>
@@ -173,7 +176,10 @@ function Connect-ExchangeSession {
         [switch]$TestMode,
 
         [Parameter()]
-        [switch]$LocalSnapin
+        [switch]$LocalSnapin,
+
+        [Parameter()]
+        [string]$ExchangeServer
     )
 
     if ($TestMode) {
@@ -183,13 +189,40 @@ function Connect-ExchangeSession {
 
     # Handle local Exchange snap-in loading (for running on Exchange server)
     if ($LocalSnapin -or $ConnectionUri -eq 'Local') {
-        Write-Verbose "Loading Exchange Management Shell locally..."
+        Write-Verbose "=== LocalSnapin Mode ==="
+        Write-Verbose "  Loading Exchange Management Shell locally..."
+        Write-Verbose "  PowerShell Version: $($PSVersionTable.PSVersion)"
+        Write-Verbose "  Current User: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+        Write-Verbose "========================="
         
-        # Try Exchange 2016/2019 snap-in first
-        $snapinName = 'Microsoft.Exchange.Management.PowerShell.SnapIn'
-        $snapinLoaded = Get-PSSnapin -Name $snapinName -ErrorAction SilentlyContinue
+        # Check if Exchange commands are already available
+        $existingCmd = Get-Command -Name Get-Mailbox -ErrorAction SilentlyContinue
+        if ($existingCmd) {
+            Write-Verbose "Exchange commands already available (Get-Mailbox found)"
+            return $null
+        }
         
-        if (-not $snapinLoaded) {
+        # Snap-ins only work in Windows PowerShell 5.1, not in PowerShell 7+
+        # PSEdition is 'Desktop' for Windows PowerShell, 'Core' for PS6+
+        # On older PS versions, PSEdition may not exist, so default to Desktop behavior
+        $psEdition = $PSVersionTable.PSEdition
+        $isWindowsPowerShell = ($null -eq $psEdition) -or ($psEdition -eq 'Desktop')
+        
+        Write-Verbose "  PSEdition: $(if ($psEdition) { $psEdition } else { '(not set - assuming Desktop)' })"
+        Write-Verbose "  IsWindowsPowerShell: $isWindowsPowerShell"
+        
+        if ($isWindowsPowerShell) {
+            Write-Verbose "Windows PowerShell detected, trying snap-ins..."
+            
+            # Try Exchange 2016/2019 snap-in
+            $snapinName = 'Microsoft.Exchange.Management.PowerShell.SnapIn'
+            $snapinLoaded = Get-PSSnapin -Name $snapinName -ErrorAction SilentlyContinue
+            
+            if ($snapinLoaded) {
+                Write-Verbose "Exchange snap-in already loaded"
+                return $null
+            }
+            
             $snapinAvailable = Get-PSSnapin -Registered -Name $snapinName -ErrorAction SilentlyContinue
             if ($snapinAvailable) {
                 Write-Verbose "Adding Exchange snap-in: $snapinName"
@@ -197,17 +230,16 @@ function Connect-ExchangeSession {
                 Write-Verbose "Exchange snap-in loaded successfully"
                 return $null
             }
-        }
-        else {
-            Write-Verbose "Exchange snap-in already loaded"
-            return $null
-        }
-        
-        # Try Exchange 2013 snap-in
-        $snapinName2013 = 'Microsoft.Exchange.Management.PowerShell.E2010'
-        $snapinLoaded2013 = Get-PSSnapin -Name $snapinName2013 -ErrorAction SilentlyContinue
-        
-        if (-not $snapinLoaded2013) {
+            
+            # Try Exchange 2013/2010 snap-in
+            $snapinName2013 = 'Microsoft.Exchange.Management.PowerShell.E2010'
+            $snapinLoaded2013 = Get-PSSnapin -Name $snapinName2013 -ErrorAction SilentlyContinue
+            
+            if ($snapinLoaded2013) {
+                Write-Verbose "Exchange 2013 snap-in already loaded"
+                return $null
+            }
+            
             $snapinAvailable2013 = Get-PSSnapin -Registered -Name $snapinName2013 -ErrorAction SilentlyContinue
             if ($snapinAvailable2013) {
                 Write-Verbose "Adding Exchange 2013 snap-in: $snapinName2013"
@@ -215,33 +247,73 @@ function Connect-ExchangeSession {
                 Write-Verbose "Exchange 2013 snap-in loaded successfully"
                 return $null
             }
+            
+            Write-Verbose "No snap-ins available, trying RemoteExchange.ps1..."
         }
         else {
-            Write-Verbose "Exchange 2013 snap-in already loaded"
-            return $null
+            Write-Verbose "PowerShell Core/7+ detected - snap-ins not supported, using RemoteExchange.ps1"
         }
         
-        # Try RemoteExchange.ps1 script (Exchange Management Shell shortcut method)
-        $remoteExchangePath = 'C:\Program Files\Microsoft\Exchange Server\V15\bin\RemoteExchange.ps1'
-        if (Test-Path $remoteExchangePath) {
-            Write-Verbose "Loading Exchange via RemoteExchange.ps1"
-            . $remoteExchangePath
-            Connect-ExchangeServer -auto -ClientApplication:ManagementShell
-            Write-Verbose "Exchange Management Shell loaded via RemoteExchange.ps1"
-            return $null
+        # Try RemoteExchange.ps1 script (works in both PS5.1 and PS7)
+        # Prioritize common hardcoded paths first, then env var
+        $remoteExchangePaths = @(
+            'C:\Program Files\Microsoft\Exchange Server\V15\bin\RemoteExchange.ps1',
+            'D:\Program Files\Microsoft\Exchange Server\V15\bin\RemoteExchange.ps1',
+            'E:\Program Files\Microsoft\Exchange Server\V15\bin\RemoteExchange.ps1',
+            'C:\Program Files\Microsoft\Exchange Server\V14\bin\RemoteExchange.ps1'
+        )
+        
+        # Add env var path if it's set
+        if ($env:ExchangeInstallPath) {
+            $envPath = Join-Path $env:ExchangeInstallPath 'bin\RemoteExchange.ps1'
+            $remoteExchangePaths = @($envPath) + $remoteExchangePaths
         }
         
-        # Check for Exchange 2010 path
-        $remoteExchangePath2010 = 'C:\Program Files\Microsoft\Exchange Server\V14\bin\RemoteExchange.ps1'
-        if (Test-Path $remoteExchangePath2010) {
-            Write-Verbose "Loading Exchange 2010 via RemoteExchange.ps1"
-            . $remoteExchangePath2010
-            Connect-ExchangeServer -auto -ClientApplication:ManagementShell
-            Write-Verbose "Exchange 2010 Management Shell loaded"
-            return $null
+        Write-Verbose "Searching for RemoteExchange.ps1 in $($remoteExchangePaths.Count) locations..."
+        
+        foreach ($path in $remoteExchangePaths) {
+            Write-Verbose "  Checking: $path"
+            if (Test-Path -Path $path -ErrorAction SilentlyContinue) {
+                Write-Verbose "Loading Exchange via RemoteExchange.ps1: $path"
+                
+                # Temporarily disable StrictMode - RemoteExchange.ps1 uses uninitialized variables
+                Set-StrictMode -Off
+                try {
+                    . $path
+                    
+                    # Connect to specific server or auto-discover
+                    if ($ExchangeServer) {
+                        Write-Verbose "Connecting to specified Exchange server: $ExchangeServer"
+                        $connectParams = @{
+                            ServerFqdn = $ExchangeServer
+                            ClientApplication = 'ManagementShell'
+                        }
+                        if ($Credential) {
+                            $connectParams['Credential'] = $Credential
+                        }
+                        Connect-ExchangeServer @connectParams
+                    }
+                    else {
+                        Write-Verbose "Using auto-discovery to find Exchange server"
+                        Connect-ExchangeServer -auto -ClientApplication:ManagementShell
+                    }
+                }
+                finally {
+                    # Re-enable StrictMode
+                    Set-StrictMode -Version Latest
+                }
+                Write-Verbose "Exchange Management Shell loaded via RemoteExchange.ps1"
+                
+                # Verify commands are available
+                $testCmd = Get-Command -Name Get-Mailbox -ErrorAction SilentlyContinue
+                if ($testCmd) {
+                    Write-Verbose "Exchange commands verified (Get-Mailbox available)"
+                    return $null
+                }
+            }
         }
         
-        throw "Exchange Management Shell not found. Ensure you are running on an Exchange server with management tools installed."
+        throw "Exchange Management Shell not found. Ensure you are running on an Exchange server with management tools installed. For PowerShell 7+, RemoteExchange.ps1 must be available."
     }
 
     if ($Type -eq 'EXO') {
@@ -428,6 +500,8 @@ function Connect-EwsService {
         Explicit EWS endpoint URL (skips autodiscover).
     .PARAMETER ProxyUrl
         Proxy server URL (e.g., http://proxy.contoso.com:8080).
+    .PARAMETER SkipCertificateCheck
+        Skip SSL certificate validation for EWS connections (for self-signed or untrusted certs).
     .OUTPUTS
         Microsoft.Exchange.WebServices.Data.ExchangeService
     #>
@@ -451,7 +525,10 @@ function Connect-EwsService {
         [string]$ExplicitUrl,
 
         [Parameter()]
-        [string]$ProxyUrl
+        [string]$ProxyUrl,
+
+        [Parameter()]
+        [switch]$SkipCertificateCheck
     )
 
     if (-not $ExplicitUrl -and -not $ImpersonationSmtp) {
@@ -466,17 +543,29 @@ function Connect-EwsService {
     Write-Verbose "  ExplicitUrl: $(if ($ExplicitUrl) { $ExplicitUrl } else { '(using Autodiscover)' })"
     Write-Verbose "  ImpersonationSmtp: $(if ($ImpersonationSmtp) { $ImpersonationSmtp } else { '(none)' })"
     Write-Verbose "  ProxyUrl: $(if ($ProxyUrl) { $ProxyUrl } else { '(none)' })"
+    Write-Verbose "  SkipCertificateCheck: $SkipCertificateCheck"
     Write-Verbose "  UseDefaultCredentials: $useDefaultCredentials"
     if (-not $useDefaultCredentials) {
         Write-Verbose "  Credential User: $($Credential.UserName)"
     }
     Write-Verbose "==============================="
 
+    # Configure SSL certificate validation bypass if requested
+    if ($SkipCertificateCheck) {
+        Write-Verbose "Bypassing SSL certificate validation for EWS connections"
+        # For .NET Framework / PowerShell 5.1
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        # Also set TLS 1.2 as minimum
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    }
+
     Write-Verbose "Loading EWS Managed API assembly..."
     Add-Type -Path $EwsAssemblyPath
     Write-Verbose "EWS assembly loaded successfully"
 
-    $exchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
+    # Use Exchange2010_SP2 for maximum compatibility
+    # Higher versions (2013_SP1+) may request properties like 'Mentions' that don't exist on older servers
+    $exchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2010_SP2
     Write-Verbose "Using Exchange version: $exchangeVersion"
 
     # PS5.1 compatible syntax
@@ -656,50 +745,119 @@ function Get-RoomCalendarItems {
         return @()
     }
 
-    $pageSize = 200
-    $basePropertySet = [Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties
-
-    if ($PSVersionTable.PSVersion.Major -ge 7) {
-        $view = [Microsoft.Exchange.WebServices.Data.CalendarView]::new($WindowStart, $WindowEnd, $pageSize)
-        $view.PropertySet = [Microsoft.Exchange.WebServices.Data.PropertySet]::new($basePropertySet)
-    }
-    else {
-        $view = New-Object Microsoft.Exchange.WebServices.Data.CalendarView($WindowStart, $WindowEnd, $pageSize)
-        $view.PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet($basePropertySet)
-    }
+    # Use IdOnly for initial search to minimize data transfer, then load full properties per item
+    # This avoids issues with properties like 'Mentions' that don't exist on all Exchange versions
+    $idOnlyPropertySet = [Microsoft.Exchange.WebServices.Data.BasePropertySet]::IdOnly
 
     $results = [System.Collections.Generic.List[PSCustomObject]]::new()
-    $offset = 0
+    $appointments = $null
+    $allAppointments = [System.Collections.Generic.List[object]]::new()
 
-    do {
-        $view.Offset = $offset
-        $appointments = $calendar.FindAppointments($view)
-
-        foreach ($item in $appointments.Items) {
-            try {
-                $item.Load()
-                $singleType = [Microsoft.Exchange.WebServices.Data.AppointmentType]::Single
-
-                $meeting = [PSCustomObject]@{
-                    Room              = $RoomSmtp
-                    Subject           = $item.Subject
-                    Start             = $item.Start
-                    End               = $item.End
-                    IsRecurring       = $item.AppointmentType -ne $singleType
-                    Organizer         = if ($item.Organizer) { $item.Organizer.Address } else { $null }
-                    RequiredAttendees = @($item.RequiredAttendees | ForEach-Object { $_.Address } | Where-Object { $_ })
-                    OptionalAttendees = @($item.OptionalAttendees | ForEach-Object { $_.Address } | Where-Object { $_ })
-                    UniqueId          = $item.Id.UniqueId
-                }
-                $results.Add($meeting)
-            }
-            catch {
-                Write-Warning "Failed to load appointment in room '$RoomSmtp': $_"
-            }
+    # Function to process a date range chunk
+    $processDateRange = {
+        param($chunkStart, $chunkEnd)
+        
+        if ($PSVersionTable.PSVersion.Major -ge 7) {
+            $view = [Microsoft.Exchange.WebServices.Data.CalendarView]::new($chunkStart, $chunkEnd)
+            $view.PropertySet = [Microsoft.Exchange.WebServices.Data.PropertySet]::new($idOnlyPropertySet)
+        }
+        else {
+            $view = New-Object Microsoft.Exchange.WebServices.Data.CalendarView($chunkStart, $chunkEnd)
+            $view.PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet($idOnlyPropertySet)
         }
 
-        $offset += $appointments.Items.Count
-    } while ($appointments.MoreAvailable)
+        return $calendar.FindAppointments($view)
+    }
+
+    try {
+        # Try full date range first
+        $appointments = & $processDateRange $WindowStart $WindowEnd
+    }
+    catch {
+        # If we hit the maximum objects limit, chunk by month
+        if ($_.Exception.Message -like '*maximum number of objects*') {
+            Write-Verbose "Large calendar detected for '$RoomSmtp', chunking by month..."
+            $appointments = $null
+            
+            $chunkStart = $WindowStart
+            while ($chunkStart -lt $WindowEnd) {
+                $chunkEnd = $chunkStart.AddMonths(1)
+                if ($chunkEnd -gt $WindowEnd) { $chunkEnd = $WindowEnd }
+                
+                try {
+                    $chunkResults = & $processDateRange $chunkStart $chunkEnd
+                    # Use foreach iteration instead of .Items to be StrictMode safe
+                    foreach ($apt in $chunkResults) {
+                        $allAppointments.Add($apt)
+                    }
+                }
+                catch {
+                    Write-Warning "Failed to retrieve appointments for room '$RoomSmtp' (chunk $chunkStart to $chunkEnd): $_"
+                }
+                
+                $chunkStart = $chunkEnd
+            }
+        }
+        else {
+            Write-Warning "Failed to retrieve appointments for room '$RoomSmtp': $_"
+            return @()
+        }
+    }
+
+    # Get the items to process (either from single call or chunked)
+    # Build a simple array to avoid StrictMode issues with .Items property
+    $itemsToProcess = @()
+    
+    if ($null -ne $appointments) {
+        # FindAppointments returns FindItemsResults<Appointment> which has an Items collection
+        # Iterate to build array instead of accessing .Items directly (StrictMode safe)
+        foreach ($apt in $appointments) {
+            $itemsToProcess += $apt
+        }
+    }
+    
+    # If no items from direct call, use chunked results
+    if ($itemsToProcess.Count -eq 0 -and $allAppointments.Count -gt 0) {
+        $itemsToProcess = @($allAppointments)
+    }
+    
+    Write-Verbose "  Found $($itemsToProcess.Count) appointments in room '$RoomSmtp'"
+
+    foreach ($item in $itemsToProcess) {
+        try {
+            # Load full properties for each appointment individually
+            # Request only the properties we need to avoid version compatibility issues
+            $propsToLoad = [Microsoft.Exchange.WebServices.Data.PropertySet]::new(
+                [Microsoft.Exchange.WebServices.Data.BasePropertySet]::IdOnly,
+                [Microsoft.Exchange.WebServices.Data.AppointmentSchema]::Subject,
+                [Microsoft.Exchange.WebServices.Data.AppointmentSchema]::Start,
+                [Microsoft.Exchange.WebServices.Data.AppointmentSchema]::End,
+                [Microsoft.Exchange.WebServices.Data.AppointmentSchema]::AppointmentType,
+                [Microsoft.Exchange.WebServices.Data.AppointmentSchema]::Organizer,
+                [Microsoft.Exchange.WebServices.Data.AppointmentSchema]::RequiredAttendees,
+                [Microsoft.Exchange.WebServices.Data.AppointmentSchema]::OptionalAttendees
+            )
+            $item.Load($propsToLoad)
+            
+            $singleType = [Microsoft.Exchange.WebServices.Data.AppointmentType]::Single
+
+            $meeting = [PSCustomObject]@{
+                Room              = $RoomSmtp
+                Subject           = $item.Subject
+                Start             = $item.Start
+                End               = $item.End
+                IsRecurring       = $item.AppointmentType -ne $singleType
+                Organizer         = if ($item.Organizer) { $item.Organizer.Address } else { $null }
+                RequiredAttendees = @($item.RequiredAttendees | ForEach-Object { $_.Address } | Where-Object { $_ })
+                OptionalAttendees = @($item.OptionalAttendees | ForEach-Object { $_.Address } | Where-Object { $_ })
+                UniqueId          = $item.Id.UniqueId
+            }
+            $results.Add($meeting)
+        }
+        catch {
+            Write-Warning "Failed to load appointment in room '$RoomSmtp': $_"
+        }
+    }
 
     return $results.ToArray()
 }
@@ -719,7 +877,8 @@ function Get-OrganizerState {
     .PARAMETER ConnectionType
         OnPrem or EXO connection type.
     .OUTPUTS
-        PSCustomObject with Organizer, Status, Enabled, Recipient properties.
+        PSCustomObject with Organizer, Status, Enabled, RecipientType, MailboxType properties.
+        MailboxType: User, SharedMailbox, RoomMailbox, EquipmentMailbox, MailUser, MailContact, etc.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -737,67 +896,167 @@ function Get-OrganizerState {
     )
 
     $isInternal = $OrganizationSuffix -and ($SmtpAddress -like "*@$OrganizationSuffix")
+    $resolvedSmtp = $null
+    $matchedInternal = $false
 
-    if (-not $isInternal) {
+    # If address looks external, try to find matching internal user by local part
+    # e.g., lieke.dewit@external.thalesgroup.com -> look for lieke.dewit@nl.thalesgroup.com
+    if (-not $isInternal -and $OrganizationSuffix) {
+        # Extract local part (before @)
+        $localPart = ($SmtpAddress -split '@')[0]
+        $internalAddress = "$localPart@$OrganizationSuffix"
+        
+        Write-Verbose "External address '$SmtpAddress' - checking for internal match '$internalAddress'"
+        
+        # Try to find internal recipient with constructed address
+        $internalRecipient = $null
+        if ($ConnectionType -eq 'EXO') {
+            $internalRecipient = Get-EXORecipient -Identity $internalAddress -ErrorAction SilentlyContinue
+        }
+        else {
+            $internalRecipient = Get-Recipient -Identity $internalAddress -ErrorAction SilentlyContinue
+        }
+        
+        if ($internalRecipient) {
+            # Found matching internal user!
+            $resolvedSmtp = $internalRecipient.PrimarySmtpAddress.ToString()
+            $matchedInternal = $true
+            $isInternal = $true
+            Write-Verbose "Matched external '$SmtpAddress' to internal user '$resolvedSmtp'"
+        }
+        else {
+            # No internal match found - truly external
+            return [PSCustomObject]@{
+                Organizer     = $SmtpAddress
+                Status        = 'External'
+                Enabled       = $null
+                RecipientType = $null
+                MailboxType   = 'External'
+                ResolvedSmtp  = $null
+                MatchedInternal = $false
+            }
+        }
+    }
+    elseif (-not $isInternal) {
+        # No OrganizationSuffix configured, can't do internal lookup
         return [PSCustomObject]@{
-            Organizer = $SmtpAddress
-            Status    = 'External'
-            Enabled   = $null
-            Recipient = $null
+            Organizer     = $SmtpAddress
+            Status        = 'External'
+            Enabled       = $null
+            RecipientType = $null
+            MailboxType   = 'External'
+            ResolvedSmtp  = $null
+            MatchedInternal = $false
         }
     }
 
-    # Lookup recipient
-    $recipient = if ($ConnectionType -eq 'EXO') {
-        Get-EXORecipient -Identity $SmtpAddress -ErrorAction SilentlyContinue
+    # Lookup recipient - use Get-Mailbox first to get RecipientTypeDetails
+    $mailbox = $null
+    $recipient = $null
+    $recipientTypeDetails = $null
+    
+    if ($ConnectionType -eq 'EXO') {
+        $mailbox = Get-EXOMailbox -Identity $SmtpAddress -ErrorAction SilentlyContinue
+        if ($mailbox) {
+            $recipientTypeDetails = $mailbox.RecipientTypeDetails
+        }
+        else {
+            $recipient = Get-EXORecipient -Identity $SmtpAddress -ErrorAction SilentlyContinue
+            if ($recipient) {
+                $recipientTypeDetails = $recipient.RecipientTypeDetails
+            }
+        }
     }
     else {
-        Get-Recipient -Identity $SmtpAddress -ErrorAction SilentlyContinue
+        $mailbox = Get-Mailbox -Identity $SmtpAddress -ErrorAction SilentlyContinue
+        if ($mailbox) {
+            $recipientTypeDetails = $mailbox.RecipientTypeDetails
+        }
+        else {
+            $recipient = Get-Recipient -Identity $SmtpAddress -ErrorAction SilentlyContinue
+            if ($recipient) {
+                $recipientTypeDetails = $recipient.RecipientTypeDetails
+            }
+        }
     }
 
-    if (-not $recipient) {
+    if (-not $mailbox -and -not $recipient) {
         return [PSCustomObject]@{
-            Organizer = $SmtpAddress
-            Status    = 'NotFound'
-            Enabled   = $null
-            Recipient = $null
+            Organizer       = $SmtpAddress
+            Status          = 'NotFound'
+            Enabled         = $null
+            RecipientType   = $null
+            MailboxType     = 'NotFound'
+            ResolvedSmtp    = $null
+            MatchedInternal = $false
         }
+    }
+
+    # Map RecipientTypeDetails to friendly MailboxType
+    $mailboxType = switch ($recipientTypeDetails) {
+        'UserMailbox'           { 'User' }
+        'SharedMailbox'         { 'SharedMailbox' }
+        'RoomMailbox'           { 'RoomMailbox' }
+        'EquipmentMailbox'      { 'EquipmentMailbox' }
+        'SchedulingMailbox'     { 'SchedulingMailbox' }
+        'LinkedMailbox'         { 'LinkedMailbox' }
+        'MailUser'              { 'MailUser' }
+        'MailContact'           { 'MailContact' }
+        'MailUniversalDistributionGroup' { 'DistributionGroup' }
+        'MailUniversalSecurityGroup'     { 'SecurityGroup' }
+        'DynamicDistributionGroup'       { 'DynamicGroup' }
+        'PublicFolder'          { 'PublicFolder' }
+        'RemoteUserMailbox'     { 'RemoteUser' }
+        'RemoteSharedMailbox'   { 'RemoteSharedMailbox' }
+        'RemoteRoomMailbox'     { 'RemoteRoomMailbox' }
+        'RemoteEquipmentMailbox' { 'RemoteEquipmentMailbox' }
+        default                 { $recipientTypeDetails.ToString() }
     }
 
     # Check enabled state
     $enabled = $null
+    $recipientObj = if ($mailbox) { $mailbox } else { $recipient }
+    
     if ($ConnectionType -eq 'EXO') {
-        $exoMailbox = Get-EXOMailbox -Identity $SmtpAddress -ErrorAction SilentlyContinue
-        if ($exoMailbox -and ($exoMailbox | Get-Member -Name AccountDisabled -ErrorAction SilentlyContinue)) {
-            $enabled = -not $exoMailbox.AccountDisabled
+        if ($mailbox -and ($mailbox | Get-Member -Name AccountDisabled -ErrorAction SilentlyContinue)) {
+            $enabled = -not $mailbox.AccountDisabled
         }
     }
     else {
-        # Try ActiveDirectory module for on-prem
-        $adLoaded = Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue
-        if (-not $adLoaded) {
-            Import-Module ActiveDirectory -ErrorAction SilentlyContinue | Out-Null
+        # Try ActiveDirectory module for on-prem (only for user mailboxes)
+        if ($mailboxType -eq 'User' -and $recipientObj.SamAccountName) {
             $adLoaded = Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue
-        }
+            if (-not $adLoaded) {
+                Import-Module ActiveDirectory -ErrorAction SilentlyContinue | Out-Null
+                $adLoaded = Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue
+            }
 
-        if ($adLoaded -and $recipient.SamAccountName) {
-            $adUser = Get-ADUser -Identity $recipient.SamAccountName -Properties Enabled -ErrorAction SilentlyContinue
-            if ($adUser) {
-                $enabled = $adUser.Enabled
+            if ($adLoaded) {
+                $adUser = Get-ADUser -Identity $recipientObj.SamAccountName -Properties Enabled -ErrorAction SilentlyContinue
+                if ($adUser) {
+                    $enabled = $adUser.Enabled
+                }
+            }
+            else {
+                Write-Verbose 'ActiveDirectory module not available; skipping enabled-state lookup.'
             }
         }
-        else {
-            Write-Verbose 'ActiveDirectory module not available; skipping enabled-state lookup.'
+        elseif ($mailboxType -in @('SharedMailbox', 'RoomMailbox', 'EquipmentMailbox')) {
+            # Resource mailboxes are typically always "enabled" for scheduling purposes
+            $enabled = $true
         }
     }
 
     $status = if ($enabled -eq $false) { 'Disabled' } else { 'Active' }
 
     return [PSCustomObject]@{
-        Organizer = $SmtpAddress
-        Status    = $status
-        Enabled   = $enabled
-        Recipient = $recipient.RecipientType
+        Organizer       = $SmtpAddress
+        Status          = $status
+        Enabled         = $enabled
+        RecipientType   = $recipientTypeDetails
+        MailboxType     = $mailboxType
+        ResolvedSmtp    = $resolvedSmtp
+        MatchedInternal = $matchedInternal
     }
 }
 

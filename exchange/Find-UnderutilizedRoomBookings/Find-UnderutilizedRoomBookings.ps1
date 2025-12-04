@@ -51,15 +51,22 @@
     Flag meetings with participant count <= this value. Default: 2.
 
 .PARAMETER OutputPath
-    Path for CSV report output.
+    Path for CSV report output. If not specified, creates timestamped file in current directory.
 
 .PARAMETER EwsUrl
     Explicit EWS endpoint URL. Skips Autodiscover if provided.
+
+.PARAMETER SkipCertificateCheck
+    Skip SSL certificate validation for EWS connections.
 
 .PARAMETER LocalSnapin
     Use local Exchange Management Shell snap-in instead of remote PowerShell.
     Run this on the Exchange server directly.
     Credentials are optional - uses current Windows identity if not provided.
+
+.PARAMETER OrganizationSuffix
+    Primary organization email domain suffix (e.g., 'nl.thalesgroup.com').
+    Used to match external addresses (e.g., user@external.thalesgroup.com) to internal users.
 
 .PARAMETER TestMode
     Run in test mode without actual Exchange/EWS connections.
@@ -124,7 +131,7 @@ param(
 
     [Parameter()]
     [ValidateNotNullOrEmpty()]
-    [string]$OutputPath = (Join-Path -Path $PWD -ChildPath 'underutilized-room-bookings.csv'),
+    [string]$OutputPath,  # Will be set with timestamp in script body
 
     [Parameter()]
     [string]$EwsUrl,
@@ -142,6 +149,10 @@ param(
     [Parameter()]
     [Alias('Local')]
     [switch]$LocalSnapin,
+
+    [Parameter()]
+    [ValidateNotNullOrEmpty()]
+    [string]$OrganizationSuffix,
 
     [Parameter()]
     [switch]$TestMode
@@ -206,16 +217,17 @@ if ($ConfigPath) {
 
     # Apply flat config values as defaults
     $configMappings = @{
-        ExchangeUri     = 'ExchangeUri'
-        ConnectionType  = 'ConnectionType'
-        EwsAssemblyPath = 'EwsAssemblyPath'
-        MonthsAhead     = 'MonthsAhead'
-        MonthsBehind    = 'MonthsBehind'
-        OutputPath      = 'OutputPath'
+        ExchangeUri       = 'ExchangeUri'
+        ConnectionType    = 'ConnectionType'
+        EwsAssemblyPath   = 'EwsAssemblyPath'
+        MonthsAhead       = 'MonthsAhead'
+        MonthsBehind      = 'MonthsBehind'
+        OutputPath        = 'OutputPath'
         ImpersonationSmtp = 'ImpersonationSmtp'
-        MinimumCapacity = 'MinimumCapacity'
-        MaxParticipants = 'MaxParticipants'
-        EwsUrl          = 'EwsUrl'
+        MinimumCapacity   = 'MinimumCapacity'
+        MaxParticipants   = 'MaxParticipants'
+        EwsUrl            = 'EwsUrl'
+        OrganizationSuffix = 'OrganizationSuffix'
     }
 
     foreach ($key in $configMappings.Keys) {
@@ -227,6 +239,12 @@ if ($ConfigPath) {
 
 # Resolve connection type
 $script:ExchangeConnectionType = Get-ResolvedConnectionType -ConnectionType $ConnectionType -ExchangeUri $ExchangeUri
+
+# Set OutputPath with timestamp if not provided
+if (-not $OutputPath) {
+    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $OutputPath = Join-Path -Path $PWD -ChildPath "underutilized-room-bookings-$timestamp.csv"
+}
 
 #endregion Configuration Loading
 
@@ -340,7 +358,10 @@ function Find-UnderutilizedMeetings {
         [datetime]$WindowStart,
 
         [Parameter(Mandatory)]
-        [datetime]$WindowEnd
+        [datetime]$WindowEnd,
+
+        [Parameter()]
+        [string]$OrganizationSuffix
     )
 
     $rooms = Get-RoomMailboxesWithCapacity -ConnectionType $ConnectionType -MinimumCapacity $MinimumCapacity
@@ -370,17 +391,28 @@ function Find-UnderutilizedMeetings {
             $participantInfo = Get-MeetingParticipantInfo -Meeting $meeting -RoomSmtp $roomSmtp
 
             if ($participantInfo.Count -le $MaxParticipants) {
+                # Get organizer state including external matching
+                $organizerState = $null
+                if ($meeting.Organizer) {
+                    $organizerState = Get-OrganizerState -SmtpAddress $meeting.Organizer `
+                        -OrganizationSuffix $OrganizationSuffix `
+                        -ConnectionType $ConnectionType
+                }
+
                 $entry = [PSCustomObject]@{
-                    Room             = $roomSmtp
-                    DisplayName      = $room.DisplayName
-                    Capacity         = $room.ResourceCapacity
-                    Subject          = $meeting.Subject
-                    Start            = $meeting.Start
-                    End              = $meeting.End
-                    Organizer        = $meeting.Organizer
-                    ParticipantCount = $participantInfo.Count
-                    Participants     = $participantInfo.Participants -join ';'
-                    UniqueId         = $meeting.UniqueId
+                    Room              = $roomSmtp
+                    DisplayName       = $room.DisplayName
+                    Capacity          = $room.ResourceCapacity
+                    Subject           = $meeting.Subject
+                    Start             = $meeting.Start
+                    End               = $meeting.End
+                    Organizer         = $meeting.Organizer
+                    OrganizerStatus   = if ($organizerState) { $organizerState.Status } else { $null }
+                    OrganizerType     = if ($organizerState) { $organizerState.MailboxType } else { $null }
+                    MatchedInternal   = if ($organizerState) { $organizerState.ResolvedSmtp } else { $null }
+                    ParticipantCount  = $participantInfo.Count
+                    Participants      = $participantInfo.Participants -join ';'
+                    UniqueId          = $meeting.UniqueId
                 }
                 $report.Add($entry)
             }
@@ -495,7 +527,7 @@ try {
     elseif ($LocalSnapin) {
         # Use current Windows identity for EWS when running locally
         Write-Verbose "Using default Windows credentials for EWS (LocalSnapin mode)"
-        $ewsParams['UseDefaultCredentials'] = $true
+        # No credential = uses default Windows credentials
     }
     if ($EwsUrl) {
         $ewsParams['ExplicitUrl'] = $EwsUrl
@@ -506,17 +538,21 @@ try {
     if ($ProxyUrl) {
         $ewsParams['ProxyUrl'] = $ProxyUrl
     }
+    if ($SkipCertificateCheck) {
+        $ewsParams['SkipCertificateCheck'] = $true
+    }
 
     $ews = Connect-EwsService @ewsParams
 
     # Find underutilized meetings
     $findParams = @{
-        Service         = $ews
-        ConnectionType  = $script:ExchangeConnectionType
-        MinimumCapacity = $MinimumCapacity
-        MaxParticipants = $MaxParticipants
-        WindowStart     = $startWindow
-        WindowEnd       = $endWindow
+        Service            = $ews
+        ConnectionType     = $script:ExchangeConnectionType
+        MinimumCapacity    = $MinimumCapacity
+        MaxParticipants    = $MaxParticipants
+        WindowStart        = $startWindow
+        WindowEnd          = $endWindow
+        OrganizationSuffix = $OrganizationSuffix
     }
 
     $results = Find-UnderutilizedMeetings @findParams

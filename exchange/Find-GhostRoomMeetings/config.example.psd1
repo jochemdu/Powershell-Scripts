@@ -16,6 +16,12 @@
 
         # Use Autodiscover for EWS endpoint
         Autodiscover = $true
+
+        # Skip SSL certificate validation (for self-signed or untrusted certs)
+        SkipCertificateCheck = $false
+
+        # Use local Exchange snap-in instead of remote PowerShell
+        LocalSnapin = $false
     }
 
     # Impersonation settings
@@ -35,6 +41,8 @@
     MonthsBehind       = 0
 
     # Report output paths
+    # Timestamp (yyyyMMdd-HHmmss) is automatically appended to filenames
+    # Example: ghost-meetings-report_20251204-143022.csv
     OutputPath         = './reports/ghost-meetings-report.csv'
     ExcelOutputPath    = './reports/ghost-meetings-report.xlsx'
 
